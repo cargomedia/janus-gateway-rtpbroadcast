@@ -37,7 +37,13 @@ Vagrant.configure('2') do |config|
 
   config.vm.provision 'janus', type: 'shell', inline: [
     'cd /vagrant/janus-gateway',
-    './configure --prefix=/home/vagrant/janus --disable-docs --disable-rabbitmq --enable-post-processing',
+    './configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --enable-post-processing',
     'make && make install'
   ].join(' && ')
+
+  config.vm.provision 'cm-plugin', type: 'shell', inline: [
+    'cd /vagrant/',
+    './configure --prefix=/opt/janus',
+    'make && make install'
+  ]
 end
