@@ -3,7 +3,7 @@ CFLAGS = $(shell pkg-config --cflags glib-2.0) -Ijanus-gateway
 CXXFLAGS = $(CFLAGS)
 lib_LTLIBRARIES = libjanus_rtpbroadcast.la
 libjanus_rtpbroadcast_la_SOURCES = libjanus_rtpbroadcast.c
-libjanus_rtpbroadcast_la_LDFLAGS = -version-info 0:0:1 $(shell pkg-config --libs glib-2.0)
+libjanus_rtpbroadcast_la_LDFLAGS = -version-info 0:0:0 $(shell pkg-config --libs glib-2.0)
 
 LIBS = $(shell pkg-config --libs glib-2.0)
 
