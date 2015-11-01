@@ -717,16 +717,15 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		/* Streams is an array now, containing pairs of audio+video streams */
 		json_t *streams = json_object_get(root, "streams");
 		size_t nstreams = json_array_size(streams);
-		if (streams && (nstreams==0 || !json_is_array(streams))) {
+		if (nstreams==0 || !json_is_array(streams)) {
 			JANUS_LOG(LOG_ERR, "Invalid element (streams should be a non-empty array)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (desc should be a non-empty array)");
+			g_snprintf(error_cause, 512, "Invalid element (streams should be a non-empty array)");
 			goto error;
 		}
 
 		sources = g_array_sized_new(FALSE, FALSE,
 			sizeof(janus_rtpbroadcast_rtp_source_request), nstreams);
-
 		size_t i;
 		json_t *v;
 
@@ -753,7 +752,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			};
 
 			/* Audio stream params */
-			json_t *audiomcast = json_object_get(root, "audiomcast");
+			json_t *audiomcast = json_object_get(v, "audiomcast");
 			if(audiomcast && !json_is_string(audiomcast)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (audiomcast should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
@@ -762,7 +761,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			} else {
 				req.amcast = (char *)json_string_value(audiomcast);
 			}
-			json_t *audioport = json_object_get(root, "audioport");
+			json_t *audioport = json_object_get(v, "audioport");
 			if(!audioport) {
 				JANUS_LOG(LOG_ERR, "Missing element (audioport)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -776,7 +775,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.aport = json_integer_value(audioport);
-			json_t *audiopt = json_object_get(root, "audiopt");
+			json_t *audiopt = json_object_get(v, "audiopt");
 			if(!audiopt) {
 				JANUS_LOG(LOG_ERR, "Missing element (audiopt)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -790,7 +789,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.acodec = json_integer_value(audiopt);
-			json_t *audiortpmap = json_object_get(root, "audiortpmap");
+			json_t *audiortpmap = json_object_get(v, "audiortpmap");
 			if(!audiortpmap) {
 				JANUS_LOG(LOG_ERR, "Missing element (audiortpmap)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -804,7 +803,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.artpmap = (char *)json_string_value(audiortpmap);
-			json_t *audiofmtp = json_object_get(root, "audiofmtp");
+			json_t *audiofmtp = json_object_get(v, "audiofmtp");
 			if(audiofmtp && !json_is_string(audiofmtp)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (audiofmtp should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
@@ -813,8 +812,8 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			}
 			req.afmtp = (char *)json_string_value(audiofmtp);
 
-			/* Video stream params */
-			json_t *videomcast = json_object_get(root, "videomcast");
+			/* Video strepam params */
+			json_t *videomcast = json_object_get(v, "videomcast");
 			if(videomcast && !json_is_string(videomcast)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (videomcast should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
@@ -823,7 +822,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			} else {
 				req.vmcast = (char *)json_string_value(videomcast);
 			}
-			json_t *videoport = json_object_get(root, "videoport");
+			json_t *videoport = json_object_get(v, "videoport");
 			if(!videoport) {
 				JANUS_LOG(LOG_ERR, "Missing element (videoport)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -837,7 +836,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.vport = json_integer_value(videoport);
-			json_t *videopt = json_object_get(root, "videopt");
+			json_t *videopt = json_object_get(v, "videopt");
 			if(!videopt) {
 				JANUS_LOG(LOG_ERR, "Missing element (videopt)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -851,7 +850,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.vcodec = json_integer_value(videopt);
-			json_t *videortpmap = json_object_get(root, "videortpmap");
+			json_t *videortpmap = json_object_get(v, "videortpmap");
 			if(!videortpmap) {
 				JANUS_LOG(LOG_ERR, "Missing element (videortpmap)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
@@ -865,7 +864,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			}
 			req.vrtpmap = (char *)json_string_value(videortpmap);
-			json_t *videofmtp = json_object_get(root, "videofmtp");
+			json_t *videofmtp = json_object_get(v, "videofmtp");
 			if(videofmtp && !json_is_string(videofmtp)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (videofmtp should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
@@ -1745,6 +1744,14 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	}
 	if(id == NULL) {
 		JANUS_LOG(LOG_VERB, "Missing id, will generate a random one...\n");
+	} else {
+		janus_mutex_lock(&mountpoints_mutex);
+		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id);
+		janus_mutex_unlock(&mountpoints_mutex);
+		if(mp != NULL) {
+			JANUS_LOG(LOG_WARN, "A stream with the provided ID already exists, skipping '%s'\n", id);
+			return NULL; /* FIXME: @landswellsong: better routine here */
+		}
 	}
 	janus_rtpbroadcast_mountpoint *live_rtp = g_malloc0(sizeof(janus_rtpbroadcast_mountpoint));
 	if(live_rtp == NULL) {
@@ -1769,7 +1776,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	live_rtp->arc = NULL;
 	live_rtp->vrc = NULL;
 
-
+  #if 0
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(janus_rtpbroadcast_rtp_source*), requests->len);
 	g_array_set_clear_func(live_rtp->sources, (GDestroyNotify) janus_rtpbroadcast_rtp_source_free);
@@ -1805,6 +1812,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 
 		g_array_append_val(live_rtp->sources, live_rtp_source);
 	}
+	#endif
 
 	live_rtp->listeners = NULL;
 	live_rtp->destroyed = 0;
