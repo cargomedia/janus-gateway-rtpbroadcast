@@ -192,6 +192,15 @@ static void *janus_rtpbroadcast_handler(void *data);
 static void janus_rtpbroadcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *janus_rtpbroadcast_relay_thread(void *data);
 
+typedef struct janus_rtpbroadcast_codecs {
+	gint audio_pt;
+	char *audio_rtpmap;
+	char *audio_fmtp;
+	gint video_pt;
+	char *video_rtpmap;
+	char *video_fmtp;
+} janus_rtpbroadcast_codecs;
+
 typedef struct janus_rtpbroadcast_rtp_source {
 	gint audio_port;
 	in_addr_t audio_mcast;
@@ -201,15 +210,6 @@ typedef struct janus_rtpbroadcast_rtp_source {
 	int video_fd;
 	janus_rtpbroadcast_codecs codecs;
 } janus_rtpbroadcast_rtp_source;
-
-typedef struct janus_rtpbroadcast_codecs {
-	gint audio_pt;
-	char *audio_rtpmap;
-	char *audio_fmtp;
-	gint video_pt;
-	char *video_rtpmap;
-	char *video_fmtp;
-} janus_rtpbroadcast_codecs;
 
 typedef struct janus_rtpbroadcast_mountpoint {
 	char *id;
@@ -236,13 +236,14 @@ janus_mutex mountpoints_mutex;
 static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp);
 
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
-struct janus_rtpbroadcast_rtp_source_request {
-	in_addr_t amcast, vmcast;
+typedef struct janus_rtpbroadcast_rtp_source_request {
+	char *amcast, *vmcast;
 	uint16_t aport, vport;
 	uint8_t acodec, vcodec;
 	char *artpmap, *vrtpmap;
 	char *afmtp, *vfmtp;
 } janus_rtpbroadcast_rtp_source_request;
+
 janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		char* id, char *name, char *desc,
 		GArray *requests);
@@ -729,7 +730,13 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		size_t i;
 		json_t *v;
 
+		/* Jansson's nomenclature changed a bit between versions */
+#ifdef json_array_foreach
 		json_array_foreach(streams, i, v) {
+#else
+		for (i = 0; i < json_array_size(streams); i++) {
+			v = json_array_get(streams, i);
+#endif
 			if (v && !json_is_object(v)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (streams elements should be objects)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
@@ -738,6 +745,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			}
 
 			janus_rtpbroadcast_rtp_source_request req = {
+				NULL, NULL,
 				0, 0,
 				0, 0,
 				NULL, NULL,
@@ -883,7 +891,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			}
 		}
 		mp = janus_rtpbroadcast_create_rtp_source(
-				id ? json_string_value(id) : NULL,
+				id ? (char *)json_string_value(id) : NULL,
 				name ? (char *)json_string_value(name) : NULL,
 				desc ? (char *)json_string_value(desc) : NULL,
 				sources);
@@ -898,12 +906,13 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		json_object_set_new(response, "streaming", json_string("created"));
 		json_object_set_new(response, "created", json_string(mp->name));
 		json_t *ml = json_object();
-		json_object_set_new(ml, "id", json_integer(mp->id));
+		json_object_set_new(ml, "id", json_string(mp->id));
 		json_object_set_new(ml, "description", json_string(mp->description));
 		json_object_set_new(ml, "streamcount", json_integer(nstreams));
 		json_object_set_new(response, "stream", ml);
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
+		#if 0
 		/* Get rid of an existing stream (notice this doesn't remove it from the config file, though) */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
@@ -967,9 +976,11 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("destroyed"));
-		json_object_set_new(response, "destroyed", json_integer(id_value));
+		json_object_set_new(response, "destroyed", json_string(id_value));
 		goto plugin_response;
+		#endif // destory
 	} else if(!strcasecmp(request_text, "recording")) {
+		#if 0
 		/* We can start/stop recording a live, RTP-based stream */
 		json_t *action = json_object_get(root, "action");
 		if(!action) {
@@ -1116,7 +1127,9 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			json_object_set_new(response, "streaming", json_string("ok"));
 			goto plugin_response;
 		}
+		#endif // record
 	} else if(!strcasecmp(request_text, "enable") || !strcasecmp(request_text, "disable")) {
+		#if 0
 		/* A request to enable/disable a mountpoint */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
@@ -1172,9 +1185,11 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("ok"));
 		goto plugin_response;
+		#endif // enable
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch")) {
+		#if 0
 		/* These messages are handled asynchronously */
 		janus_rtpbroadcast_message *msg = g_malloc0(sizeof(janus_rtpbroadcast_message));
 		if(msg == NULL) {
@@ -1194,6 +1209,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		g_async_queue_push(messages, msg);
 
 		return janus_plugin_result_new(JANUS_PLUGIN_OK_WAIT, NULL);
+		#endif // watch etc
 	} else {
 		JANUS_LOG(LOG_VERB, "Unknown request '%s'\n", request_text);
 		error_code = JANUS_RTPBROADCAST_ERROR_INVALID_REQUEST;
@@ -1391,6 +1407,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 		char *sdp = NULL;
 		/* All these requests can only be handled asynchronously */
 		if(!strcasecmp(request_text, "watch")) {
+			#if 0
 			json_t *id = json_object_get(root, "id");
 			if(!id) {
 				JANUS_LOG(LOG_ERR, "Missing element (id)\n");
@@ -1488,7 +1505,9 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
+			#endif // watch
 		} else if(!strcasecmp(request_text, "start")) {
+			#if 0
 			if(session->mountpoint == NULL) {
 				JANUS_LOG(LOG_VERB, "Can't start: no mountpoint set\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
@@ -1563,8 +1582,10 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
 			json_object_set_new(result, "switched", json_string("ok"));
-			json_object_set_new(result, "id", json_integer(id_value));
+			json_object_set_new(result, "id", json_string(id_value));
+			#endif // start
 		} else if(!strcasecmp(request_text, "stop")) {
+			#if 0
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
 				janus_rtpbroadcast_message_free(msg);
@@ -1588,6 +1609,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			session->mountpoint = NULL;
 			/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
 			gateway->close_pc(session->handle);
+			#endif // stop
 		} else {
 			JANUS_LOG(LOG_VERB, "Unknown request '%s'\n", request_text);
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_REQUEST;
@@ -1700,7 +1722,7 @@ static void janus_rtpbroadcast_rtp_source_free(janus_rtpbroadcast_rtp_source *so
 static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp) {
 	mp->destroyed = janus_get_monotonic_time();
 
-	g_free(id);
+	g_free(mp->id);
 	g_free(mp->name);
 	g_free(mp->description);
 	janus_mutex_lock(&mp->mutex);
@@ -1769,7 +1791,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 			return NULL;
 		}
 		live_rtp_source->audio_mcast = req.amcast ? inet_addr(req.amcast) : INADDR_ANY;
-		live_rtp_source->audio_port = aport;
+		live_rtp_source->audio_port = req.aport;
 		live_rtp_source->video_mcast = req.vmcast ? inet_addr(req.vmcast) : INADDR_ANY;
 		live_rtp_source->video_port = req.vport;
 		live_rtp_source->audio_fd = -1;
@@ -1798,8 +1820,8 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 			g_free(live_rtp->name);
 		if(description)
 			g_free(description);
-		if(live_rtp_source)
-			g_free(live_rtp_source);
+		/* if(live_rtp_source) FIXME: @landswellsong check pointers
+			g_free(live_rtp_source); */
 		g_free(live_rtp);
 		return NULL;
 	}
@@ -1808,6 +1830,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 
 /* FIXME Test thread to relay RTP frames coming from gstreamer/ffmpeg/others */
 static void *janus_rtpbroadcast_relay_thread(void *data) {
+	#if 0
 	JANUS_LOG(LOG_VERB, "Starting streaming relay thread\n");
 	janus_rtpbroadcast_mountpoint *mountpoint = (janus_rtpbroadcast_mountpoint *)data;
 	if(!mountpoint) {
@@ -1978,6 +2001,7 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 	}
 	JANUS_LOG(LOG_VERB, "[%s] Leaving streaming relay thread\n", name);
 	g_free(name);
+	#endif // relay
 	g_thread_unref(g_thread_self());
 	return NULL;
 }
