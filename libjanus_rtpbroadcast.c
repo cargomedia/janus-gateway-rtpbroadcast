@@ -406,7 +406,11 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 	if(config != NULL)
 		janus_config_print(config);
 
-	mountpoints = g_hash_table_new(NULL, NULL);
+	mountpoints = g_hash_table_new_full(
+		g_str_hash,	 /* Hashing func */
+		g_str_equal, /* Key comparator */
+		g_free,			 /* Key destructor */
+		NULL);			 /* Value destructor, we don't want this done automatically */
 	janus_mutex_init(&mountpoints_mutex);
 	/* Parse configuration to populate the mountpoints */
 	if(config != NULL) {
@@ -475,7 +479,7 @@ void janus_rtpbroadcast_destroy(void) {
 	/* FIXME We should destroy the sessions cleanly */
 	usleep(500000);
 	janus_mutex_lock(&mountpoints_mutex);
-	g_hash_table_destroy(mountpoints);
+	g_hash_table_destroy(mountpoints); /* TODO: @landswellsong do we need to free them? */
 	janus_mutex_unlock(&mountpoints_mutex);
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_destroy(sessions);
@@ -868,8 +872,8 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		if(id == NULL) {
 			JANUS_LOG(LOG_VERB, "Missing id, will generate a random one...\n");
 		} else {
-			janus_mutex_lock(&mountpoints_mutex); /* FIXME: g_hash_table_lookup for strings */
-			mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(json_integer_value(id)));
+			janus_mutex_lock(&mountpoints_mutex);
+			mp = g_hash_table_lookup(mountpoints, id);
 			janus_mutex_unlock(&mountpoints_mutex);
 			if(mp != NULL) {
 				JANUS_LOG(LOG_ERR, "A stream with the provided ID already exists\n");
@@ -908,48 +912,23 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Missing element (id)");
 			goto error;
 		}
-		if(!json_is_integer(id) || json_integer_value(id) < 0) {
-			JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
+		if(!json_is_string(id)) < 0) {
+			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
+			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 			goto error;
 		}
-		gint64 id_value = json_integer_value(id);
+		char *id_value = json_string_value(id);
 		janus_mutex_lock(&mountpoints_mutex);
-		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(id_value));
+		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 		if(mp == NULL) {
 			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %"SCNu64"\n", id_value);
+			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
 			error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
-			g_snprintf(error_cause, 512, "No such mountpoint/stream %"SCNu64"", id_value);
+			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 			goto error;
 		}
-		if(mp->secret) {
-			/* This action requires an authorized user */
-			json_t *secret = json_object_get(root, "secret");
-			if(!secret) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Missing element (secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-				g_snprintf(error_cause, 512, "Missing element (secret)");
-				goto error;
-			}
-			if(!json_is_string(secret)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (secret should be a string)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (secret should be a string)");
-				goto error;
-			}
-			if(!janus_strcmp_const_time(mp->secret, json_string_value(secret))) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Unauthorized (wrong secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_UNAUTHORIZED;
-				g_snprintf(error_cause, 512, "Unauthorized (wrong secret)");
-				goto error;
-			}
-		}
-		JANUS_LOG(LOG_VERB, "Request to unmount mountpoint/stream %"SCNu64"\n", id_value);
+		JANUS_LOG(LOG_VERB, "Request to unmount mountpoint/stream %s\n", id_value);
 		/* FIXME Should we kick the current viewers as well? */
 		janus_mutex_lock(&mp->mutex);
 		GList *viewer = g_list_first(mp->listeners);
@@ -980,7 +959,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
 		if(!mp->destroyed) {
 			mp->destroyed = janus_get_monotonic_time();
-			g_hash_table_remove(mountpoints, GINT_TO_POINTER(id_value));
+			g_hash_table_remove(mountpoints, id_value);
 			/* Cleaning up and removing the mountpoint is done in a lazy way */
 			old_mountpoints = g_list_append(old_mountpoints, mp);
 		}
@@ -1019,43 +998,21 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Missing element (id)");
 			goto error;
 		}
-		if(!json_is_integer(id) || json_integer_value(id) < 0) {
-			JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
+		if(!json_is_string(id)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
+			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 			goto error;
 		}
-		gint64 id_value = json_integer_value(id);
+		char *id_value = json_string_value(id);
 		janus_mutex_lock(&mountpoints_mutex);
-		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(id_value));
+		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 		if(mp == NULL) {
 			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %"SCNu64"\n", id_value);
+			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
 			error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
-			g_snprintf(error_cause, 512, "No such mountpoint/stream %"SCNu64"", id_value);
+			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 			goto error;
-		}
-		if(mp->secret) {
-			/* This action requires an authorized user */
-			json_t *secret = json_object_get(root, "secret");
-			if(!secret) {
-				JANUS_LOG(LOG_ERR, "Missing element (secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-				g_snprintf(error_cause, 512, "Missing element (secret)");
-				goto error;
-			}
-			if(!json_is_string(secret)) {
-				JANUS_LOG(LOG_ERR, "Invalid element (secret should be a string)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (secret should be a string)");
-				goto error;
-			}
-			if(!janus_strcmp_const_time(mp->secret, json_string_value(secret))) {
-				JANUS_LOG(LOG_ERR, "Unauthorized (wrong secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_UNAUTHORIZED;
-				g_snprintf(error_cause, 512, "Unauthorized (wrong secret)");
-				goto error;
-			}
 		}
 		if(!strcasecmp(action_text, "start")) {
 			/* Start a recording for audio and/or video */
@@ -1168,46 +1125,21 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Missing element (id)");
 			goto error;
 		}
-		if(!json_is_integer(id) || json_integer_value(id) < 0) {
-			JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
+		if(!json_is_string(id)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
+			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 			goto error;
 		}
-		gint64 id_value = json_integer_value(id);
+		char *id_value = json_string_value(id);
 		janus_mutex_lock(&mountpoints_mutex);
-		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(id_value));
+		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 		if(mp == NULL) {
 			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %"SCNu64"\n", id_value);
+			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
 			error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
-			g_snprintf(error_cause, 512, "No such mountpoint/stream %"SCNu64"", id_value);
+			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 			goto error;
-		}
-		if(mp->secret) {
-			/* This action requires an authorized user */
-			json_t *secret = json_object_get(root, "secret");
-			if(!secret) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Missing element (secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-				g_snprintf(error_cause, 512, "Missing element (secret)");
-				goto error;
-			}
-			if(!json_is_string(secret)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (secret should be a string)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (secret should be a string)");
-				goto error;
-			}
-			if(!janus_strcmp_const_time(mp->secret, json_string_value(secret))) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Unauthorized (wrong secret)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_UNAUTHORIZED;
-				g_snprintf(error_cause, 512, "Unauthorized (wrong secret)");
-				goto error;
-			}
 		}
 		if(!strcasecmp(request_text, "enable")) {
 			/* Enable a previously disabled mountpoint */
@@ -1466,49 +1398,24 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				g_snprintf(error_cause, 512, "Missing element (id)");
 				goto error;
 			}
-			if(!json_is_integer(id) || json_integer_value(id) < 0) {
+			if(!json_is_string(id)) {
 				JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
 				goto error;
 			}
-			gint64 id_value = json_integer_value(id);
+			char *id_value = json_string_value(id);
 			janus_mutex_lock(&mountpoints_mutex);
-			janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(id_value));
+			janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 			if(mp == NULL) {
 				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %"SCNu64"\n", id_value);
+				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
 				error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
-				g_snprintf(error_cause, 512, "No such mountpoint/stream %"SCNu64"", id_value);
+				g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 				goto error;
 			}
-			if(mp->pin) {
-				/* This mountpoint is protected by a PIN */
-				json_t *pin = json_object_get(root, "pin");
-				if(!pin) {
-					janus_mutex_unlock(&mountpoints_mutex);
-					JANUS_LOG(LOG_ERR, "Missing element (pin)\n");
-					error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-					g_snprintf(error_cause, 512, "Missing element (pin)");
-					goto error;
-				}
-				if(!json_is_string(pin)) {
-					janus_mutex_unlock(&mountpoints_mutex);
-					JANUS_LOG(LOG_ERR, "Invalid element (pin should be a string)\n");
-					error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-					g_snprintf(error_cause, 512, "Invalid element (pin should be a string)");
-					goto error;
-				}
-				if(!janus_strcmp_const_time(mp->pin, json_string_value(pin))) {
-					janus_mutex_unlock(&mountpoints_mutex);
-					JANUS_LOG(LOG_ERR, "Unauthorized (wrong pin)\n");
-					error_code = JANUS_RTPBROADCAST_ERROR_UNAUTHORIZED;
-					g_snprintf(error_cause, 512, "Unauthorized (wrong pin)");
-					goto error;
-				}
-			}
 			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "Request to watch mountpoint/stream %"SCNu64"\n", id_value);
+			JANUS_LOG(LOG_VERB, "Request to watch mountpoint/stream %s\n", id_value);
 			session->stopping = FALSE;
 			session->mountpoint = mp;
 			/* TODO Check if user is already watching a stream, if the video is active, etc. */
@@ -1623,24 +1530,24 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				g_snprintf(error_cause, 512, "Missing element (id)");
 				goto error;
 			}
-			if(!json_is_integer(id) || json_integer_value(id) < 0) {
-				JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
+			if(!json_is_string(id)) {
+				JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
+				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 				goto error;
 			}
-			gint64 id_value = json_integer_value(id);
+			char *id_value = json_string_value(id);
 			janus_mutex_lock(&mountpoints_mutex);
-			janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, GINT_TO_POINTER(id_value));
+			janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 			if(mp == NULL) {
 				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %"SCNu64"\n", id_value);
+				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
 				error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
-				g_snprintf(error_cause, 512, "No such mountpoint/stream %"SCNu64"", id_value);
+				g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 				goto error;
 			}
 			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "Request to switch to mountpoint/stream %"SCNu64" (old: %"SCNu64")\n", id_value, oldmp->id);
+			JANUS_LOG(LOG_VERB, "Request to switch to mountpoint/stream %s (old: %s)\n", id_value, oldmp->id);
 			session->paused = TRUE;
 			/* Unsubscribe from the previous mountpoint and subscribe to the new one */
 			janus_mutex_lock(&oldmp->mutex);
@@ -1881,7 +1788,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	live_rtp->destroyed = 0;
 	janus_mutex_init(&live_rtp->mutex);
 	janus_mutex_lock(&mountpoints_mutex);
-	g_hash_table_insert(mountpoints, GINT_TO_POINTER(live_rtp->id), live_rtp); /* TODO: @landswellsong hash table sting values */
+	g_hash_table_insert(mountpoints, g_strdup(live_rtp->id), live_rtp); /* TODO: @landswellsong hash table sting values */
 	janus_mutex_unlock(&mountpoints_mutex);
 	GError *error = NULL;
 	g_thread_try_new(live_rtp->name, &janus_rtpbroadcast_relay_thread, live_rtp, &error); /* TODO: @landswellsong see this callback */
