@@ -911,7 +911,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		json_object_set_new(response, "stream", ml);
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
-		#if 0
 		/* Get rid of an existing stream (notice this doesn't remove it from the config file, though) */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
@@ -920,7 +919,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Missing element (id)");
 			goto error;
 		}
-		if(!json_is_string(id)) < 0) {
+		if(!json_is_string(id) < 0) {
 			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
@@ -977,7 +976,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
 		goto plugin_response;
-		#endif // destory
 	} else if(!strcasecmp(request_text, "recording")) {
 		#if 0
 		/* We can start/stop recording a live, RTP-based stream */
