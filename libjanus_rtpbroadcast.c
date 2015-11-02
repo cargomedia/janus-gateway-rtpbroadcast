@@ -676,6 +676,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			json_object_set_new(ml, "id", json_string(mp->id));
 			json_object_set_new(ml, "name", json_string(mp->name));
 			json_object_set_new(ml, "description", json_string(mp->description));
+			json_object_set_new(ml, "streamcount", json_integer(mp->sources->len));
 			/* TODO: @landswellsong do we need to list anything else here? */
 			json_array_append_new(list, ml);
 		}
@@ -688,8 +689,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 	} else if(!strcasecmp(request_text, "create")) {
 		/* Create a new stream */
 		janus_rtpbroadcast_mountpoint *mp = NULL;
-
-		/* TODO: @landswellsong: check what happens if those json_t values go NULL */
 
 	  /* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 		json_t *id = json_object_get(root, "id");
@@ -925,7 +924,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 			goto error;
 		}
-		char *id_value = json_string_value(id);
+		const char *id_value = json_string_value(id);
 		janus_mutex_lock(&mountpoints_mutex);
 		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 		if(mp == NULL) {
@@ -1748,25 +1747,19 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		return NULL;
 	}
-	live_rtp->id = id /*? id : g_random_int()*/;
+	live_rtp->id = id ? g_strdup(id) : g_strdup("RemoveThisPleaseASAP")/*? id : g_random_int() TODO: @landswellsong: random ID? */;
 	char tempname[255];
 	if(!name) {
 		memset(tempname, 0, 255);
-		g_snprintf(tempname, 255, "%"SCNu64, live_rtp->id);
+		g_snprintf(tempname, 255, "%s", live_rtp->id);
 	}
 	live_rtp->name = g_strdup(name ? name : tempname);
-	char *description = NULL;
-	if(desc != NULL)
-		description = g_strdup(desc);
-	else
-		description = g_strdup(name ? name : tempname);
-	live_rtp->description = description;
+	live_rtp->description = g_strdup(desc != NULL ? desc : (name ? name : tempname));
 	live_rtp->enabled = TRUE;
 	live_rtp->active = FALSE;
 	live_rtp->arc = NULL;
 	live_rtp->vrc = NULL;
 
-  #if 0
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(janus_rtpbroadcast_rtp_source*), requests->len);
 	g_array_set_clear_func(live_rtp->sources, (GDestroyNotify) janus_rtpbroadcast_rtp_source_free);
@@ -1775,17 +1768,9 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		janus_rtpbroadcast_rtp_source_request req = g_array_index(requests, janus_rtpbroadcast_rtp_source_request, i);
 		janus_rtpbroadcast_rtp_source *live_rtp_source = g_malloc0(sizeof(janus_rtpbroadcast_rtp_source));
 
-		if(live_rtp->name == NULL || description == NULL || live_rtp_source == NULL) {
-			/* FIXME: @landswellsong possible memory leaks all along */
+		if(live_rtp_source == NULL) {
 			JANUS_LOG(LOG_FATAL, "Memory error!\n");
-			if(live_rtp->name)
-				g_free(live_rtp->name);
-			if(description)
-				g_free(description);
-			if(live_rtp_source)
-				g_free(live_rtp_source);
-			g_free(live_rtp);
-			return NULL;
+			goto error;
 		}
 		live_rtp_source->audio_mcast = req.amcast ? inet_addr(req.amcast) : INADDR_ANY;
 		live_rtp_source->audio_port = req.aport;
@@ -1802,28 +1787,27 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 
 		g_array_append_val(live_rtp->sources, live_rtp_source);
 	}
-	#endif
 
 	live_rtp->listeners = NULL;
 	live_rtp->destroyed = 0;
 	janus_mutex_init(&live_rtp->mutex);
-	janus_mutex_lock(&mountpoints_mutex);
-	g_hash_table_insert(mountpoints, g_strdup(live_rtp->id), live_rtp); /* TODO: @landswellsong hash table sting values */
-	janus_mutex_unlock(&mountpoints_mutex);
 	GError *error = NULL;
 	g_thread_try_new(live_rtp->name, &janus_rtpbroadcast_relay_thread, live_rtp, &error); /* TODO: @landswellsong see this callback */
 	if(error != NULL) {
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP thread...\n", error->code, error->message ? error->message : "??");
-		if(live_rtp->name)
-			g_free(live_rtp->name);
-		if(description)
-			g_free(description);
-		/* if(live_rtp_source) FIXME: @landswellsong check pointers
-			g_free(live_rtp_source); */
-		g_free(live_rtp);
-		return NULL;
+		goto error;
 	}
+	janus_mutex_lock(&mountpoints_mutex);
+	g_hash_table_insert(mountpoints, g_strdup(live_rtp->id), live_rtp);
+	janus_mutex_unlock(&mountpoints_mutex);
 	return live_rtp;
+
+	error:
+	g_free(live_rtp->id);
+	g_free(live_rtp->name);
+	g_free(live_rtp->description);
+	g_array_free(live_rtp->sources, TRUE);
+	return NULL;
 }
 
 /* FIXME Test thread to relay RTP frames coming from gstreamer/ffmpeg/others */
