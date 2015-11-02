@@ -244,6 +244,11 @@ typedef struct janus_rtpbroadcast_rtp_source_request {
 	char *afmtp, *vfmtp;
 } janus_rtpbroadcast_rtp_source_request;
 
+typedef struct janus_rtpbroadcast_rtp_relay_thread_data {
+	janus_rtpbroadcast_mountpoint *mp;
+	guint i;
+} janus_rtpbroadcast_rtp_relay_thread_data;
+
 janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		char* id, char *name, char *desc,
 		GArray *requests);
@@ -1791,11 +1796,20 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	live_rtp->listeners = NULL;
 	live_rtp->destroyed = 0;
 	janus_mutex_init(&live_rtp->mutex);
-	GError *error = NULL;
-	g_thread_try_new(live_rtp->name, &janus_rtpbroadcast_relay_thread, live_rtp, &error); /* TODO: @landswellsong see this callback */
-	if(error != NULL) {
-		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP thread...\n", error->code, error->message ? error->message : "??");
-		goto error;
+	for (i = 0; i < live_rtp->sources->len; i++) {
+		char tempname[256];
+		memset(tempname, 0, 255);
+		g_snprintf(tempname, 255, "%s #i", live_rtp->id, i);
+
+		GError *error = NULL;
+		janus_rtpbroadcast_rtp_relay_thread_data *dt = g_malloc0(sizeof(janus_rtpbroadcast_rtp_relay_thread_data)); /* Memory fred within */
+		dt->mp = live_rtp;
+		dt->i = i;
+		g_thread_try_new(tempname, &janus_rtpbroadcast_relay_thread, dt, &error);
+		if(error != NULL) {
+			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP thread...\n", error->code, error->message ? error->message : "??");
+			goto error;
+		}
 	}
 	janus_mutex_lock(&mountpoints_mutex);
 	g_hash_table_insert(mountpoints, g_strdup(live_rtp->id), live_rtp);
@@ -1812,34 +1826,39 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 
 /* FIXME Test thread to relay RTP frames coming from gstreamer/ffmpeg/others */
 static void *janus_rtpbroadcast_relay_thread(void *data) {
-	#if 0
 	JANUS_LOG(LOG_VERB, "Starting streaming relay thread\n");
-	janus_rtpbroadcast_mountpoint *mountpoint = (janus_rtpbroadcast_mountpoint *)data;
+	janus_rtpbroadcast_rtp_relay_thread_data *tdata = (janus_rtpbroadcast_rtp_relay_thread_data *)data;
+	janus_rtpbroadcast_mountpoint *mountpoint = tdata->mp;
+	guint i = tdata->i;
+	janus_rtpbroadcast_rtp_source *source = g_array_index(mountpoint->sources, janus_rtpbroadcast_rtp_source*, i);
+  /* Data no longer needed */
+	g_free(data);
+
 	if(!mountpoint) {
 		JANUS_LOG(LOG_ERR, "Invalid mountpoint!\n");
 		g_thread_unref(g_thread_self());
 		return NULL;
 	}
-	if(mountpoint->source == NULL) {
+	if(source == NULL) {
 		JANUS_LOG(LOG_ERR, "[%s] Invalid RTP source mountpoint!\n", mountpoint->name);
 		g_thread_unref(g_thread_self());
 		return NULL;
 	}
-	gint audio_port = mountpoint->source->audio_port;
-	gint video_port = mountpoint->source->video_port;
+	gint audio_port = source->audio_port;
+	gint video_port = source->video_port;
 	/* Socket stuff */
-	int audio_fd = mountpoint->source->audio_fd;
+	int audio_fd = source->audio_fd;
 	if((audio_fd < 0) && (audio_port >= 0)) {
-		audio_fd = janus_rtpbroadcast_create_fd(audio_port, mountpoint->source->audio_mcast, "Audio", "audio", mountpoint->name);
+		audio_fd = janus_rtpbroadcast_create_fd(audio_port, source->audio_mcast, "Audio", "audio", mountpoint->name);
 		if(audio_fd < 0) {
 			g_thread_unref(g_thread_self());
 			return NULL;
 		}
 		JANUS_LOG(LOG_VERB, "[%s] Audio listener bound to port %d\n", mountpoint->name, audio_port);
 	}
-	int video_fd = mountpoint->source->video_fd;
+	int video_fd = source->video_fd;
 	if((video_fd < 0) && (video_port >= 0)) {
-		video_fd = janus_rtpbroadcast_create_fd(video_port, mountpoint->source->video_mcast, "Video", "video", mountpoint->name);
+		video_fd = janus_rtpbroadcast_create_fd(video_port, source->video_mcast, "Video", "video", mountpoint->name);
 		if(video_fd < 0) {
 			g_thread_unref(g_thread_self());
 			return NULL;
@@ -1917,11 +1936,11 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			packet.data->seq_number = htons(a_last_seq);
 			//~ JANUS_LOG(LOG_VERB, " ... updated RTP packet (ssrc=%u, pt=%u, seq=%u, ts=%u)...\n",
 				//~ ntohl(rtp->ssrc), rtp->type, ntohs(rtp->seq_number), ntohl(rtp->timestamp));
-			packet.data->type = mountpoint->codecs.audio_pt;
+			packet.data->type = source->codecs.audio_pt;
 			/* Is there a recorder? */
-			if(mountpoint->source->arc) {
+			if(mountpoint->arc) {
 				JANUS_LOG(LOG_HUGE, "[%s] Saving audio frame (%d bytes)\n", name, bytes);
-				janus_recorder_save_frame(mountpoint->source->arc, buffer, bytes);
+				janus_recorder_save_frame(mountpoint->arc, buffer, bytes);
 			}
 			/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 			packet.timestamp = ntohl(packet.data->timestamp);
@@ -1965,11 +1984,11 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			packet.data->seq_number = htons(v_last_seq);
 			//~ JANUS_LOG(LOG_VERB, " ... updated RTP packet (ssrc=%u, pt=%u, seq=%u, ts=%u)...\n",
 				//~ ntohl(rtp->ssrc), rtp->type, ntohs(rtp->seq_number), ntohl(rtp->timestamp));
-			packet.data->type = mountpoint->codecs.video_pt;
+			packet.data->type = source->codecs.video_pt;
 			/* Is there a recorder? */
-			if(mountpoint->source->vrc) {
+			if(mountpoint->vrc) {
 				JANUS_LOG(LOG_HUGE, "[%s] Saving video frame (%d bytes)\n", name, bytes);
-				janus_recorder_save_frame(mountpoint->source->vrc, buffer, bytes);
+				janus_recorder_save_frame(mountpoint->vrc, buffer, bytes);
 			}
 			/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 			packet.timestamp = ntohl(packet.data->timestamp);
@@ -1983,7 +2002,6 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 	}
 	JANUS_LOG(LOG_VERB, "[%s] Leaving streaming relay thread\n", name);
 	g_free(name);
-	#endif // relay
 	g_thread_unref(g_thread_self());
 	return NULL;
 }
