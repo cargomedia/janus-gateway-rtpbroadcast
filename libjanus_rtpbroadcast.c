@@ -201,16 +201,6 @@ typedef struct janus_rtpbroadcast_codecs {
 	char *video_fmtp;
 } janus_rtpbroadcast_codecs;
 
-typedef struct janus_rtpbroadcast_rtp_source {
-	gint audio_port;
-	in_addr_t audio_mcast;
-	gint video_port;
-	in_addr_t video_mcast;
-	int audio_fd;
-	int video_fd;
-	janus_rtpbroadcast_codecs codecs;
-} janus_rtpbroadcast_rtp_source;
-
 typedef struct janus_rtpbroadcast_mountpoint {
 	char *id;
 	char *name;
@@ -232,6 +222,17 @@ typedef struct janus_rtpbroadcast_mountpoint {
 GHashTable *mountpoints;
 static GList *old_mountpoints;
 janus_mutex mountpoints_mutex;
+
+typedef struct janus_rtpbroadcast_rtp_source {
+	gint audio_port;
+	in_addr_t audio_mcast;
+	gint video_port;
+	in_addr_t video_mcast;
+	int audio_fd;
+	int video_fd;
+	janus_rtpbroadcast_codecs codecs;
+	janus_rtpbroadcast_mountpoint *parent;
+} janus_rtpbroadcast_rtp_source;
 
 static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp);
 
@@ -1777,6 +1778,9 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 			JANUS_LOG(LOG_FATAL, "Memory error!\n");
 			goto error;
 		}
+
+		live_rtp_source->parent = live_rtp;
+
 		live_rtp_source->audio_mcast = req.amcast ? inet_addr(req.amcast) : INADDR_ANY;
 		live_rtp_source->audio_port = req.aport;
 		live_rtp_source->video_mcast = req.vmcast ? inet_addr(req.vmcast) : INADDR_ANY;
