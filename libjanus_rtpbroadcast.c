@@ -233,6 +233,8 @@ typedef struct janus_rtpbroadcast_rtp_source {
 	janus_rtpbroadcast_codecs codecs;
 	janus_rtpbroadcast_mountpoint *parent;
 } janus_rtpbroadcast_rtp_source;
+GHashTable *used_ports;
+janus_mutex used_ports_mutex;
 
 static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp);
 
@@ -429,6 +431,9 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 
 	/* Not showing anything, no mountpoint configured at startup */
 
+	used_ports = g_hash_table_new(NULL, NULL);
+	janus_mutex_init(&used_ports_mutex);
+
 	sessions = g_hash_table_new(NULL, NULL);
 	janus_mutex_init(&sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) janus_rtpbroadcast_message_free);
@@ -491,6 +496,9 @@ void janus_rtpbroadcast_destroy(void) {
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_destroy(sessions);
 	janus_mutex_unlock(&sessions_mutex);
+	janus_mutex_lock(&used_ports_mutex);
+	g_hash_table_destroy(used_ports);
+	janus_mutex_unlock(&used_ports_mutex);
 	g_async_queue_unref(messages);
 	messages = NULL;
 	sessions = NULL;
@@ -682,7 +690,16 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			json_object_set_new(ml, "id", json_string(mp->id));
 			json_object_set_new(ml, "name", json_string(mp->name));
 			json_object_set_new(ml, "description", json_string(mp->description));
-			json_object_set_new(ml, "streamcount", json_integer(mp->sources->len));
+			/* json_object_set_new(ml, "streamcount", json_integer(mp->sources->len)); */
+			json_t *st = json_array();
+			guint i;
+			for (i = 0; i < mp->sources->len; i++) {
+				json_t *v = json_object();
+				json_object_set_new(v, "audioport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->audio_port));
+				json_object_set_new(v, "videoport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->video_port));
+				json_array_append_new(st, v);
+			}
+			json_object_set_new(ml, "streams", st);
 			/* TODO: @landswellsong do we need to list anything else here? */
 			json_array_append_new(list, ml);
 		}
@@ -912,7 +929,15 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		json_t *ml = json_object();
 		json_object_set_new(ml, "id", json_string(mp->id));
 		json_object_set_new(ml, "description", json_string(mp->description));
-		json_object_set_new(ml, "streamcount", json_integer(nstreams));
+/*		json_object_set_new(ml, "streamcount", json_integer(nstreams)); */
+		json_t *st = json_array();
+		for (i = 0; i < mp->sources->len; i++) {
+			json_t *v = json_object();
+			json_object_set_new(v, "audioport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->audio_port));
+			json_object_set_new(v, "videoport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->video_port));
+			json_array_append_new(st, v);
+		}
+		json_object_set_new(ml, "streams", st);
 		json_object_set_new(response, "stream", ml);
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
@@ -1719,6 +1744,12 @@ static void janus_rtpbroadcast_rtp_source_free(gpointer src) {
 	g_free(source->codecs.video_rtpmap);
 	g_free(source->codecs.video_fmtp);
 
+	/* Remove ports from used ports */
+	janus_mutex_lock(&used_ports_mutex);
+	g_hash_table_remove(used_ports, GINT_TO_POINTER(source->audio_port));
+	g_hash_table_remove(used_ports, GINT_TO_POINTER(source->video_port));
+	janus_mutex_unlock(&used_ports_mutex);
+
 	g_free(source);
 }
 
@@ -1770,7 +1801,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(janus_rtpbroadcast_rtp_source*), requests->len);
 	g_array_set_clear_func(live_rtp->sources, (GDestroyNotify) janus_rtpbroadcast_rtp_source_free);
-	guint i;
+	guint i,j;
 	for (i = 0; i < requests->len; i++) {
 		janus_rtpbroadcast_rtp_source_request req = g_array_index(requests, janus_rtpbroadcast_rtp_source_request, i);
 		janus_rtpbroadcast_rtp_source *live_rtp_source = g_malloc0(sizeof(janus_rtpbroadcast_rtp_source));
@@ -1794,6 +1825,19 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		live_rtp_source->codecs.video_pt = req.vcodec;
 		live_rtp_source->codecs.video_rtpmap = req.vrtpmap ? g_strdup(req.vrtpmap) : NULL;
 		live_rtp_source->codecs.video_fmtp = req.vfmtp ? g_strdup(req.vfmtp) : NULL;
+
+		/* Checking the next valid port */
+		janus_mutex_lock(&used_ports_mutex);
+		gint *ports[] = { &live_rtp_source->audio_port, &live_rtp_source->video_port };
+		for (j = 0; j < 2; j++) {
+			/* FIXME @landswellsong: if port less than minimum trim it to minimum */
+			/* TODO @landswellsong: hash table only remembers the source, do we need it
+				      to remember whether it was video or audio too? */
+			while (g_hash_table_lookup(used_ports, GINT_TO_POINTER(*ports[j])) != NULL) /* FIXME Upper limit!!! */
+				++*ports[j]; /* TODO: @landswellsong: pretty simple linear probing for now */
+			g_hash_table_insert(used_ports, GINT_TO_POINTER(*ports[j]), live_rtp_source);
+		}
+		janus_mutex_unlock(&used_ports_mutex);
 
 		g_array_append_val(live_rtp->sources, live_rtp_source);
 	}
