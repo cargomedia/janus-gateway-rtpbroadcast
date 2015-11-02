@@ -1,3 +1,4 @@
 [general]
-; Maximum amount of video streams per mountpoint group
-maxstreamspergroup = 10
+; Port range for automatic port generation
+minport = 8000
+maxport = 9000

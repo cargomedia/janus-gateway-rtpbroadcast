@@ -424,7 +424,19 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 	janus_mutex_init(&mountpoints_mutex);
 	/* Parse configuration to populate the mountpoints */
 	if(config != NULL) {
-	  /* TODO @landswellsong: do something here */
+		const char *inames [] = { "minport", "maxport" };
+		guint *ivars [] = { &minport, &maxport };
+		guint i;
+
+		for (i = 0; i < sizeof(ivars)/sizeof(guint*); i++) {
+			janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
+			if (itm && itm->value) {
+				guint res = g_ascii_strtoull(itm->value, NULL, 10);
+				if (res != 0)
+					*ivars[i] = res;
+			}
+		}
+
 		/* Done */
 		janus_config_destroy(config);
 		config = NULL;
@@ -444,17 +456,17 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 
 	GError *error = NULL;
 	/* Start the sessions watchdog */
-	watchdog = g_thread_try_new("streaming watchdog", &janus_rtpbroadcast_watchdog, NULL, &error);
+	watchdog = g_thread_try_new("rtpbroadcast watchdog", &janus_rtpbroadcast_watchdog, NULL, &error);
 	if(!watchdog) {
 		g_atomic_int_set(&initialized, 0);
-		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the Streaming watchdog thread...\n", error->code, error->message ? error->message : "??");
+		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast watchdog thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
 	}
 	/* Launch the thread that will handle incoming messages */
-	handler_thread = g_thread_try_new("janus streaming handler", janus_rtpbroadcast_handler, NULL, &error);
+	handler_thread = g_thread_try_new("janus rtpbroadcast handler", janus_rtpbroadcast_handler, NULL, &error);
 	if(error != NULL) {
 		g_atomic_int_set(&initialized, 0);
-		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the Streaming handler thread...\n", error->code, error->message ? error->message : "??");
+		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast handler thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
 	}
 	JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_RTPBROADCAST_NAME);
@@ -1827,7 +1839,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		janus_mutex_lock(&used_ports_mutex);
 		gint *ports[] = { &live_rtp_source->audio_port, &live_rtp_source->video_port };
 		for (j = 0; j < 2; j++) {
-			if (*ports[j] < minport)
+			if (*ports[j] < minport || *ports[j] > maxport)
 				*ports[j] = minport;
 
 			/* Starting at the requested point, and taking it as zero reference
