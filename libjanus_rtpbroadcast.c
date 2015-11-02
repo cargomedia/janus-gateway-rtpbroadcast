@@ -1706,7 +1706,8 @@ static int janus_rtpbroadcast_create_fd(int port, in_addr_t mcast, const char* l
 }
 
 /* Helpers to destroy a streaming mountpoint. */
-static void janus_rtpbroadcast_rtp_source_free(janus_rtpbroadcast_rtp_source *source) {
+static void janus_rtpbroadcast_rtp_source_free(gpointer src) {
+	janus_rtpbroadcast_rtp_source *source = *((janus_rtpbroadcast_rtp_source **)src);
 	if(source->audio_fd > 0) {
 		close(source->audio_fd);
 	}
@@ -1788,10 +1789,10 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		live_rtp_source->audio_fd = -1;
 		live_rtp_source->video_fd = -1;
 		live_rtp_source->codecs.audio_pt = req.acodec;
-		live_rtp_source->codecs.audio_rtpmap = g_strdup(req.artpmap);
+		live_rtp_source->codecs.audio_rtpmap = req.artpmap ? g_strdup(req.artpmap) : NULL;
 		live_rtp_source->codecs.audio_fmtp = req.afmtp ? g_strdup(req.afmtp) : NULL;
 		live_rtp_source->codecs.video_pt = req.vcodec;
-		live_rtp_source->codecs.video_rtpmap = g_strdup(req.vrtpmap);
+		live_rtp_source->codecs.video_rtpmap = req.vrtpmap ? g_strdup(req.vrtpmap) : NULL;
 		live_rtp_source->codecs.video_fmtp = req.vfmtp ? g_strdup(req.vfmtp) : NULL;
 
 		g_array_append_val(live_rtp->sources, live_rtp_source);
