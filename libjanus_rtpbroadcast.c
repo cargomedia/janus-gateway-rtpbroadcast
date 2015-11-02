@@ -880,7 +880,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			JANUS_LOG(LOG_VERB, "Missing id, will generate a random one...\n");
 		} else {
 			janus_mutex_lock(&mountpoints_mutex);
-			mp = g_hash_table_lookup(mountpoints, id);
+			mp = g_hash_table_lookup(mountpoints, json_string_value(id));
 			janus_mutex_unlock(&mountpoints_mutex);
 			if(mp != NULL) {
 				JANUS_LOG(LOG_ERR, "A stream with the provided ID already exists\n");
@@ -1742,14 +1742,6 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	}
 	if(id == NULL) {
 		JANUS_LOG(LOG_VERB, "Missing id, will generate a random one...\n");
-	} else {
-		janus_mutex_lock(&mountpoints_mutex);
-		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id);
-		janus_mutex_unlock(&mountpoints_mutex);
-		if(mp != NULL) {
-			JANUS_LOG(LOG_WARN, "A stream with the provided ID already exists, skipping '%s'\n", id);
-			return NULL; /* FIXME: @landswellsong: better routine here */
-		}
 	}
 	janus_rtpbroadcast_mountpoint *live_rtp = g_malloc0(sizeof(janus_rtpbroadcast_mountpoint));
 	if(live_rtp == NULL) {
