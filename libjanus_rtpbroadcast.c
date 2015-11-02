@@ -728,7 +728,13 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 
 	  /* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 		json_t *id = json_object_get(root, "id");
-		if(id && !json_is_string(id)) {
+		if(!id) {
+			JANUS_LOG(LOG_ERR, "Missing element (id)\n");
+			error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
+			g_snprintf(error_cause, 512, "Missing element (id)");
+			goto error;
+		}
+		if(!json_is_string(id)) {
 			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
@@ -1786,15 +1792,12 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	if(name == NULL) {
 		JANUS_LOG(LOG_VERB, "Missing name, will generate a random one...\n");
 	}
-	if(id == NULL) {
-		JANUS_LOG(LOG_VERB, "Missing id, will generate a random one...\n");
-	}
 	janus_rtpbroadcast_mountpoint *live_rtp = g_malloc0(sizeof(janus_rtpbroadcast_mountpoint));
 	if(live_rtp == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		return NULL;
 	}
-	live_rtp->id = id ? g_strdup(id) : g_strdup("RemoveThisPleaseASAP")/*? id : g_random_int() TODO: @landswellsong: random ID? */;
+	live_rtp->id = g_strdup(id);
 	char tempname[255];
 	if(!name) {
 		memset(tempname, 0, 255);
