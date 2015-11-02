@@ -185,6 +185,7 @@ janus_plugin *create(void) {
 
 /* Useful stuff */
 static volatile gint initialized = 0, stopping = 0;
+static guint minport = 9000, maxport = 12000; /* TODO: @landswellsong: maybe tread safe? */
 static janus_callbacks *gateway = NULL;
 static GThread *handler_thread;
 static GThread *watchdog;
@@ -224,9 +225,9 @@ static GList *old_mountpoints;
 janus_mutex mountpoints_mutex;
 
 typedef struct janus_rtpbroadcast_rtp_source {
-	gint audio_port;
+	guint audio_port;
 	in_addr_t audio_mcast;
-	gint video_port;
+	guint video_port;
 	in_addr_t video_mcast;
 	int audio_fd;
 	int video_fd;
@@ -784,19 +785,17 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				req.amcast = (char *)json_string_value(audiomcast);
 			}
 			json_t *audioport = json_object_get(v, "audioport");
-			if(!audioport) {
-				JANUS_LOG(LOG_ERR, "Missing element (audioport)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-				g_snprintf(error_cause, 512, "Missing element (audioport)");
-				goto error;
+			if(audioport) {
+				if (!json_is_integer(audioport) || json_integer_value(audioport) < 0) {
+					JANUS_LOG(LOG_ERR, "Invalid element (audioport should be a positive integer)\n");
+					error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
+					g_snprintf(error_cause, 512, "Invalid element (audioport should be a positive integer)");
+					goto error;
+				}
+				req.aport = json_integer_value(audioport);
+			} else {
+				req.aport = 0;
 			}
-			if(!json_is_integer(audioport) || json_integer_value(audioport) < 0) {
-				JANUS_LOG(LOG_ERR, "Invalid element (audioport should be a positive integer)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (audioport should be a positive integer)");
-				goto error;
-			}
-			req.aport = json_integer_value(audioport);
 			json_t *audiopt = json_object_get(v, "audiopt");
 			if(!audiopt) {
 				JANUS_LOG(LOG_ERR, "Missing element (audiopt)\n");
@@ -845,19 +844,17 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				req.vmcast = (char *)json_string_value(videomcast);
 			}
 			json_t *videoport = json_object_get(v, "videoport");
-			if(!videoport) {
-				JANUS_LOG(LOG_ERR, "Missing element (videoport)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_MISSING_ELEMENT;
-				g_snprintf(error_cause, 512, "Missing element (videoport)");
-				goto error;
+			if(videoport) {
+				if (!json_is_integer(videoport) || json_integer_value(videoport) < 0) {
+					JANUS_LOG(LOG_ERR, "Invalid element (videoport should be a positive integer)\n");
+					error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
+					g_snprintf(error_cause, 512, "Invalid element (videoport should be a positive integer)");
+					goto error;
+				}
+				req.vport = json_integer_value(videoport);
+			} else {
+				req.vport = 0;
 			}
-			if(!json_is_integer(videoport) || json_integer_value(videoport) < 0) {
-				JANUS_LOG(LOG_ERR, "Invalid element (videoport should be a positive integer)\n");
-				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (videoport should be a positive integer)");
-				goto error;
-			}
-			req.vport = json_integer_value(videoport);
 			json_t *videopt = json_object_get(v, "videopt");
 			if(!videopt) {
 				JANUS_LOG(LOG_ERR, "Missing element (videopt)\n");
@@ -1830,11 +1827,25 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		janus_mutex_lock(&used_ports_mutex);
 		gint *ports[] = { &live_rtp_source->audio_port, &live_rtp_source->video_port };
 		for (j = 0; j < 2; j++) {
-			/* FIXME @landswellsong: if port less than minimum trim it to minimum */
+			if (*ports[j] < minport)
+				*ports[j] = minport;
+
+			/* Starting at the requested point, and taking it as zero reference
+			 * Scary formula below is just looping over range starting from arbitary point */
+		  guint looppos = 0, tryport = *ports[j];
+			gpointer src = NULL;
 			/* TODO @landswellsong: hash table only remembers the source, do we need it
 				      to remember whether it was video or audio too? */
-			while (g_hash_table_lookup(used_ports, GINT_TO_POINTER(*ports[j])) != NULL) /* FIXME Upper limit!!! */
-				++*ports[j]; /* TODO: @landswellsong: pretty simple linear probing for now */
+			while ( ( src = g_hash_table_lookup(used_ports, GINT_TO_POINTER(tryport)) != NULL )
+						&& looppos <= maxport - minport + 1) {
+				++looppos; /* TODO: @landswellsong: pretty simple linear probing for now */
+				tryport = (looppos + *ports[j] - minport) % (maxport - minport + 1) + minport;
+			}
+
+			if ( src != NULL ) /* Tried everything and failed */
+				goto error;
+
+			*ports[j] = tryport;
 			g_hash_table_insert(used_ports, GINT_TO_POINTER(*ports[j]), live_rtp_source);
 		}
 		janus_mutex_unlock(&used_ports_mutex);
