@@ -1237,7 +1237,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch")) {
-		#if 0
 		/* These messages are handled asynchronously */
 		janus_rtpbroadcast_message *msg = g_malloc0(sizeof(janus_rtpbroadcast_message));
 		if(msg == NULL) {
@@ -1257,7 +1256,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		g_async_queue_push(messages, msg);
 
 		return janus_plugin_result_new(JANUS_PLUGIN_OK_WAIT, NULL);
-		#endif // watch etc
 	} else {
 		JANUS_LOG(LOG_VERB, "Unknown request '%s'\n", request_text);
 		error_code = JANUS_RTPBROADCAST_ERROR_INVALID_REQUEST;
@@ -1455,7 +1453,6 @@ static void *janus_rtpbroadcast_handler(void *data) {
 		char *sdp = NULL;
 		/* All these requests can only be handled asynchronously */
 		if(!strcasecmp(request_text, "watch")) {
-			#if 0
 			json_t *id = json_object_get(root, "id");
 			if(!id) {
 				JANUS_LOG(LOG_ERR, "Missing element (id)\n");
@@ -1464,9 +1461,9 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				goto error;
 			}
 			if(!json_is_string(id)) {
-				JANUS_LOG(LOG_ERR, "Invalid element (id should be a positive integer)\n");
+				JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid element (id should be a positive integer)");
+				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 				goto error;
 			}
 			char *id_value = json_string_value(id);
@@ -1498,54 +1495,58 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				"v=0\r\no=%s %"SCNu64" %"SCNu64" IN IP4 127.0.0.1\r\n",
 					"-", sessid, version);
 			g_strlcat(sdptemp, buffer, 2048);
-			g_strlcat(sdptemp, "s=Streaming Test\r\nt=0 0\r\n", 2048);
-			if(mp->codecs.audio_pt >= 0) {
+			g_strlcat(sdptemp, "s=Streaming Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
+			/* FIXME @landswellsong: temporary code for single stream only */
+			/* ASSUMING #sources > 0 */
+			janus_rtpbroadcast_codecs codecs = g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, 0)->codecs;
+
+			if(codecs.audio_pt >= 0) {
 				/* Add audio line */
 				g_snprintf(buffer, 512,
 					"m=audio 1 RTP/SAVPF %d\r\n"
 					"c=IN IP4 1.1.1.1\r\n",
-					mp->codecs.audio_pt);
+					codecs.audio_pt);
 				g_strlcat(sdptemp, buffer, 2048);
-				if(mp->codecs.audio_rtpmap) {
+				if(codecs.audio_rtpmap) {
 					g_snprintf(buffer, 512,
 						"a=rtpmap:%d %s\r\n",
-						mp->codecs.audio_pt, mp->codecs.audio_rtpmap);
+						codecs.audio_pt, codecs.audio_rtpmap);
 					g_strlcat(sdptemp, buffer, 2048);
 				}
-				if(mp->codecs.audio_fmtp) {
+				if(codecs.audio_fmtp) {
 					g_snprintf(buffer, 512,
 						"a=fmtp:%d %s\r\n",
-						mp->codecs.audio_pt, mp->codecs.audio_fmtp);
+						codecs.audio_pt, codecs.audio_fmtp);
 					g_strlcat(sdptemp, buffer, 2048);
 				}
 				g_strlcat(sdptemp, "a=sendonly\r\n", 2048);
 			}
-			if(mp->codecs.video_pt >= 0) {
+			if(codecs.video_pt >= 0) {
 				/* Add video line */
 				g_snprintf(buffer, 512,
 					"m=video 1 RTP/SAVPF %d\r\n"
 					"c=IN IP4 1.1.1.1\r\n",
-					mp->codecs.video_pt);
+					codecs.video_pt);
 				g_strlcat(sdptemp, buffer, 2048);
-				if(mp->codecs.video_rtpmap) {
+				if(codecs.video_rtpmap) {
 					g_snprintf(buffer, 512,
 						"a=rtpmap:%d %s\r\n",
-						mp->codecs.video_pt, mp->codecs.video_rtpmap);
+						codecs.video_pt, codecs.video_rtpmap);
 					g_strlcat(sdptemp, buffer, 2048);
 				}
-				if(mp->codecs.video_fmtp) {
+				if(codecs.video_fmtp) {
 					g_snprintf(buffer, 512,
 						"a=fmtp:%d %s\r\n",
-						mp->codecs.video_pt, mp->codecs.video_fmtp);
+						codecs.video_pt, codecs.video_fmtp);
 					g_strlcat(sdptemp, buffer, 2048);
 				}
 				g_snprintf(buffer, 512,
 					"a=rtcp-fb:%d nack\r\n",
-					mp->codecs.video_pt);
+					codecs.video_pt);
 				g_strlcat(sdptemp, buffer, 2048);
 				g_snprintf(buffer, 512,
 					"a=rtcp-fb:%d goog-remb\r\n",
-					mp->codecs.video_pt);
+					codecs.video_pt);
 				g_strlcat(sdptemp, buffer, 2048);
 				g_strlcat(sdptemp, "a=sendonly\r\n", 2048);
 			}
@@ -1553,7 +1554,6 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
-			#endif // watch
 		} else if(!strcasecmp(request_text, "start")) {
 			#if 0
 			if(session->mountpoint == NULL) {
