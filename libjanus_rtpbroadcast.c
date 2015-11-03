@@ -245,8 +245,22 @@ typedef struct janus_rtpbroadcast_rtp_source {
 	janus_rtpbroadcast_codecs codecs;
 	janus_rtpbroadcast_mountpoint *parent;
 } janus_rtpbroadcast_rtp_source;
-GHashTable *used_ports;
-janus_mutex used_ports_mutex;
+
+/* The idea is, keep pointers to sources in hash table and keep track of
+	 available ports in the shuffled list. When a port is fred, it is inserted
+	 at a random poisition back in the list, thus the computatonally intensive
+	 operations are carried at startup and at source destruction only
+	 */
+static struct {
+	GHashTable *used_ports;
+	GList *free_ports;
+	janus_mutex used_ports_mutex;
+	guint ports_available;					/* GList doesn't keep track of size */
+} port_manager;
+static void janus_rtpbroadcast_port_manager_init();
+static guint janus_rtpbroadcast_port_manager_assign(gpointer);
+static void janus_rtpbroadcast_port_manager_free(guint);
+static void janus_rtpbroadcast_port_manager_destroy();
 
 static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp);
 
@@ -447,16 +461,20 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 			}
 		}
 
+		if(minport > maxport) {
+			g_atomic_int_set(&initialized, 0);
+			JANUS_LOG(LOG_ERR, "Configuration error: minport %d is bigger than maxport %d\n", minport, maxport);
+			return -1;
+		}
+
+		janus_rtpbroadcast_port_manager_init(minport, maxport);
+
 		/* Done */
 		janus_config_destroy(config);
 		config = NULL;
 	}
 
 	/* Not showing anything, no mountpoint configured at startup */
-
-	used_ports = g_hash_table_new(NULL, NULL);
-	janus_mutex_init(&used_ports_mutex);
-
 	sessions = g_hash_table_new(NULL, NULL);
 	janus_mutex_init(&sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) janus_rtpbroadcast_message_free);
@@ -519,9 +537,7 @@ void janus_rtpbroadcast_destroy(void) {
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_destroy(sessions);
 	janus_mutex_unlock(&sessions_mutex);
-	janus_mutex_lock(&used_ports_mutex);
-	g_hash_table_destroy(used_ports);
-	janus_mutex_unlock(&used_ports_mutex);
+	janus_rtpbroadcast_port_manager_destroy();
 	g_async_queue_unref(messages);
 	messages = NULL;
 	sessions = NULL;
@@ -1440,7 +1456,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 				goto error;
 			}
-			char *id_value = json_string_value(id);
+			const char *id_value = json_string_value(id);
 			janus_mutex_lock(&mountpoints_mutex);
 			janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 			if(mp == NULL) {
@@ -1740,10 +1756,8 @@ static void janus_rtpbroadcast_rtp_source_free(gpointer src) {
 	g_free(source->codecs.video_fmtp);
 
 	/* Remove ports from used ports */
-	janus_mutex_lock(&used_ports_mutex);
-	g_hash_table_remove(used_ports, GINT_TO_POINTER(source->audio_port));
-	g_hash_table_remove(used_ports, GINT_TO_POINTER(source->video_port));
-	janus_mutex_unlock(&used_ports_mutex);
+	janus_rtpbroadcast_port_manager_free(source->audio_port);
+	janus_rtpbroadcast_port_manager_free(source->video_port);
 
 	g_free(source);
 }
@@ -1819,31 +1833,10 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		live_rtp_source->codecs.video_fmtp = req.vfmtp ? g_strdup(req.vfmtp) : NULL;
 
 		/* Checking the next valid port */
-		janus_mutex_lock(&used_ports_mutex);
-		gint *ports[] = { &live_rtp_source->audio_port, &live_rtp_source->video_port };
-		for (j = 0; j < 2; j++) {
-			if (*ports[j] < minport || *ports[j] > maxport)
-				*ports[j] = minport;
-
-			/* Starting at the requested point, and taking it as zero reference
-			 * Scary formula below is just looping over range starting from arbitary point */
-		  guint looppos = 0, tryport = *ports[j];
-			gpointer src = NULL;
-			/* TODO @landswellsong: hash table only remembers the source, do we need it
-				      to remember whether it was video or audio too? */
-			while ( ( src = g_hash_table_lookup(used_ports, GINT_TO_POINTER(tryport)) != NULL )
-						&& looppos <= maxport - minport + 1) {
-				++looppos; /* TODO: @landswellsong: pretty simple linear probing for now */
-				tryport = (looppos + *ports[j] - minport) % (maxport - minport + 1) + minport;
-			}
-
-			if ( src != NULL ) /* Tried everything and failed */
-				goto error;
-
-			*ports[j] = tryport;
-			g_hash_table_insert(used_ports, GINT_TO_POINTER(*ports[j]), live_rtp_source);
-		}
-		janus_mutex_unlock(&used_ports_mutex);
+		/* TODO @landswellsong: hash table only remembers the source, do we need it
+						to remember whether it was video or audio too? */
+		live_rtp_source->audio_port = janus_rtpbroadcast_port_manager_assign(live_rtp_source);
+		live_rtp_source->video_port = janus_rtpbroadcast_port_manager_assign(live_rtp_source);
 
 		g_array_append_val(live_rtp->sources, live_rtp_source);
 	}
@@ -2125,4 +2118,61 @@ static void janus_rtpbroadcast_relay_rtp_packet(gpointer data, gpointer user_dat
 	}
 
 	return;
+}
+
+static void janus_rtpbroadcast_port_manager_init(guint min, guint max) {
+	port_manager.used_ports = g_hash_table_new(NULL, NULL);
+	janus_mutex_init(&port_manager.used_ports_mutex);
+
+	/* Generating random sequence of ports */
+	GList *straight = NULL;
+	guint i;
+	for (i = minport; i <= maxport; i++)
+		straight = g_list_prepend(straight, GUINT_TO_POINTER(i));
+	guint len = port_manager.ports_available = maxport - minport + 1;
+
+	while (len > 0) {
+		GList *el = g_list_nth(straight, random() % (len--));
+		port_manager.free_ports = g_list_prepend(port_manager.free_ports, GUINT_TO_POINTER(el->data));
+		straight = g_list_delete_link(straight, el);
+	}
+
+	/* Shouldn't happen but just in case */
+	if (straight)
+		g_list_free(straight);
+}
+
+static guint janus_rtpbroadcast_port_manager_assign(gpointer src) {
+	janus_mutex_lock(&port_manager.used_ports_mutex);
+
+	/* Inserting the new port to hash table and removing from the list */
+	guint res = GPOINTER_TO_UINT(port_manager.free_ports->data);
+	port_manager.free_ports = g_list_delete_link(port_manager.free_ports, port_manager.free_ports);
+	g_hash_table_insert(port_manager.used_ports, GUINT_TO_POINTER(res), src);
+
+	port_manager.ports_available--;
+
+	janus_mutex_unlock(&port_manager.used_ports_mutex);
+	return res;
+}
+
+static void janus_rtpbroadcast_port_manager_free(guint port) {
+	janus_mutex_lock(&port_manager.used_ports_mutex);
+
+	/* Removing the port from the hash table and inserting to the list */
+	g_hash_table_remove(port_manager.used_ports, GUINT_TO_POINTER(port));
+	port_manager.free_ports = g_list_insert_before(port_manager.free_ports,
+	 	g_list_nth(port_manager.free_ports, port_manager.ports_available), GUINT_TO_POINTER(port));
+
+	port_manager.ports_available++;
+
+	janus_mutex_unlock(&port_manager.used_ports_mutex);
+}
+
+static void janus_rtpbroadcast_port_manager_destroy() {
+	janus_mutex_lock(&port_manager.used_ports_mutex);
+	g_hash_table_destroy(port_manager.used_ports);
+	g_list_free(port_manager.free_ports);
+	port_manager.ports_available = 0;
+	janus_mutex_unlock(&port_manager.used_ports_mutex);
 }
