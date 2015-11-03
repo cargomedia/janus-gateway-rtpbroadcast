@@ -185,7 +185,6 @@ janus_plugin *create(void) {
 
 /* Useful stuff */
 static volatile gint initialized = 0, stopping = 0;
-static guint minport = 9000, maxport = 12000; /* TODO: @landswellsong: maybe tread safe? */
 static janus_callbacks *gateway = NULL;
 static GThread *handler_thread;
 static GThread *watchdog;
@@ -440,6 +439,8 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 	if(config != NULL)
 		janus_config_print(config);
 
+	guint minport = 8000, maxport = 12000;
+
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
 		g_str_equal, /* Key comparator */
@@ -467,12 +468,11 @@ int janus_rtpbroadcast_init(janus_callbacks *callback, const char *config_path) 
 			return -1;
 		}
 
-		janus_rtpbroadcast_port_manager_init(minport, maxport);
-
 		/* Done */
 		janus_config_destroy(config);
 		config = NULL;
 	}
+	janus_rtpbroadcast_port_manager_init(minport, maxport);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -1969,7 +1969,7 @@ static void janus_rtpbroadcast_relay_rtp_packet(gpointer data, gpointer user_dat
 	return;
 }
 
-static void janus_rtpbroadcast_port_manager_init(guint min, guint max) {
+static void janus_rtpbroadcast_port_manager_init(guint minport, guint maxport) {
 	port_manager.used_ports = g_hash_table_new(NULL, NULL);
 	janus_mutex_init(&port_manager.used_ports_mutex);
 
