@@ -2088,7 +2088,7 @@ static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *st, int by
 		st->cur = 10e6L*(gdouble)st->bytes_since_last_avg / (ml - st->last_avg_usec);
 		if (st->cur > st->max)
 			st->max = st->cur;
-		if (st->cur < st->min)
+		if (st->cur < st->min || st->min == 0.0L)
 			st->min = st->cur;
 
 		st->bytes_since_last_avg = 0;
