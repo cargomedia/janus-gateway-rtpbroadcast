@@ -218,13 +218,29 @@ typedef struct janus_rtpbroadcast_codecs {
 	char *fmtp[AV];
 } janus_rtpbroadcast_codecs;
 
+#define STAT_UPDATE_DELAY 1000000
+typedef struct janus_rtpbroadcast_stats {
+	gdouble min;
+	gdouble max;
+	gdouble cur;
+	gdouble avg;
+
+	guint64 start_usec;
+	guint64 last_avg_usec;
+	guint64 bytes_since_start;
+	guint64 bytes_since_last_avg;
+
+	janus_mutex stat_mutex;
+} janus_rtpbroadcast_stats;
+static void janus_rtpbroadcast_stats_restart(janus_rtpbroadcast_stats *);
+static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *, int);
+
 typedef struct janus_rtpbroadcast_mountpoint {
 	char *id;
 	char *name;
 	char *description;
 
 	gboolean enabled;
-	gboolean active;
 
 	gboolean recorded; 		/* Only sources[0] is recorded by default */
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
@@ -240,10 +256,12 @@ static GList *old_mountpoints;
 janus_mutex mountpoints_mutex;
 
 typedef struct janus_rtpbroadcast_rtp_source {
+	gboolean active;
 	guint port[AV];
 	in_addr_t mcast[AV];
 	int fd[AV];
 	janus_rtpbroadcast_codecs codecs;
+	janus_rtpbroadcast_stats stats;
 	janus_rtpbroadcast_mountpoint *parent;
 } janus_rtpbroadcast_rtp_source;
 
@@ -1732,7 +1750,6 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	live_rtp->name = g_strdup(name ? name : tempname);
 	live_rtp->description = g_strdup(desc != NULL ? desc : (name ? name : tempname));
 	live_rtp->enabled = TRUE;
-	live_rtp->active = FALSE;
 
 	live_rtp->rc[AUDIO] = NULL;
 	live_rtp->rc[VIDEO] = NULL;
@@ -1751,6 +1768,8 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		}
 
 		live_rtp_source->parent = live_rtp;
+		janus_mutex_init(&live_rtp_source->stats.stat_mutex);
+		memset(&live_rtp_source->stats, 0, sizeof(live_rtp_source->stats));
 
 		for (j = AUDIO; j <= VIDEO; j++) {
 			live_rtp_source->mcast[j] = req.mcast[j] ? inet_addr(req.mcast[j]) : INADDR_ANY;
@@ -1872,10 +1891,14 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			if(source->fd[j] && (fds[j].revents & POLLIN)) {
 				/* Got something (RTP) */
 				fds[j].revents = 0;
-				if(mountpoint->active == FALSE)
-					mountpoint->active = TRUE;
+				if(source->active == FALSE) {
+					source->active = TRUE;
+					/* After inactivity we reset stats */
+					janus_rtpbroadcast_stats_restart(&source->stats);
+				}
 				addrlen = sizeof(remote);
 				bytes = recvfrom(source->fd[j], buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
+				janus_rtpbroadcast_stats_update(&source->stats, bytes);
 				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
 				/* If paused, ignore this packet */
 				if(!mountpoint->enabled)
@@ -1969,7 +1992,7 @@ static void janus_rtpbroadcast_relay_rtp_packet(gpointer data, gpointer user_dat
 	return;
 }
 
-static void janus_rtpbroadcast_port_manager_init(guint minport, guint maxport) {
+void janus_rtpbroadcast_port_manager_init(guint minport, guint maxport) {
 	port_manager.used_ports = g_hash_table_new(NULL, NULL);
 	janus_mutex_init(&port_manager.used_ports_mutex);
 
@@ -1991,7 +2014,7 @@ static void janus_rtpbroadcast_port_manager_init(guint minport, guint maxport) {
 		g_list_free(straight);
 }
 
-static guint janus_rtpbroadcast_port_manager_assign(gpointer src) {
+guint janus_rtpbroadcast_port_manager_assign(gpointer src) {
 	janus_mutex_lock(&port_manager.used_ports_mutex);
 
 	/* Inserting the new port to hash table and removing from the list */
@@ -2005,7 +2028,7 @@ static guint janus_rtpbroadcast_port_manager_assign(gpointer src) {
 	return res;
 }
 
-static void janus_rtpbroadcast_port_manager_free(guint port) {
+void janus_rtpbroadcast_port_manager_free(guint port) {
 	janus_mutex_lock(&port_manager.used_ports_mutex);
 
 	/* Removing the port from the hash table and inserting to the list */
@@ -2018,10 +2041,50 @@ static void janus_rtpbroadcast_port_manager_free(guint port) {
 	janus_mutex_unlock(&port_manager.used_ports_mutex);
 }
 
-static void janus_rtpbroadcast_port_manager_destroy() {
+void janus_rtpbroadcast_port_manager_destroy() {
 	janus_mutex_lock(&port_manager.used_ports_mutex);
+
 	g_hash_table_destroy(port_manager.used_ports);
 	g_list_free(port_manager.free_ports);
 	port_manager.ports_available = 0;
+
 	janus_mutex_unlock(&port_manager.used_ports_mutex);
+}
+
+static void janus_rtpbroadcast_stats_restart(janus_rtpbroadcast_stats *st) {
+	janus_mutex_lock(&st->stat_mutex);
+
+	memset(st, 0, sizeof(*st));
+	guint64 ml = janus_get_monotonic_time();
+	st->start_usec = ml;
+	st->last_avg_usec = ml;
+
+	janus_mutex_unlock(&st->stat_mutex);
+}
+
+static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *st, int bytes) {
+	janus_mutex_lock(&st->stat_mutex);
+
+	/* This overflows at 17179869184 GB of traffic just in case :) */
+	st->bytes_since_start += bytes;
+	st->bytes_since_last_avg += bytes;
+
+	guint64 ml = janus_get_monotonic_time();
+
+	/* If we step over delay, calculate current and compare min/max */
+	if (ml - st->last_avg_usec >= STAT_UPDATE_DELAY) {
+		st->cur = 10e6L*(gdouble)st->bytes_since_last_avg / (ml - st->last_avg_usec);
+		if (st->cur > st->max)
+			st->max = st->cur;
+		if (st->cur < st->min)
+			st->min = st->cur;
+
+		st->bytes_since_last_avg = 0;
+		st->last_avg_usec = ml;
+	}
+
+	/* Re-calculate average regardless */
+	st->avg = 10e6L*(gdouble)st->bytes_since_start / (ml - st->start_usec);
+
+	janus_mutex_unlock(&st->stat_mutex);
 }
