@@ -193,6 +193,17 @@ static void *janus_rtpbroadcast_handler(void *data);
 static void janus_rtpbroadcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *janus_rtpbroadcast_relay_thread(void *data);
 
+/* Helper to remove insane code duplication everywhere
+ 	 Sample illustrating use:
+			something things[] = { X, Y, Z };
+			_foreach(i, things) {
+				print(things[i]);
+			}
+
+			Note, iterator variable exported in the current scope;
+			*/
+#define _foreach(var, container) size_t var; for (var = 0; var < sizeof(container)/sizeof(container[0]); i++)
+
 typedef struct janus_rtpbroadcast_codecs {
 	gint audio_pt;
 	char *audio_rtpmap;
@@ -1171,7 +1182,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		}
 		#endif // record
 	} else if(!strcasecmp(request_text, "enable") || !strcasecmp(request_text, "disable")) {
-		#if 0
 		/* A request to enable/disable a mountpoint */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
@@ -1186,7 +1196,7 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 			goto error;
 		}
-		char *id_value = json_string_value(id);
+		const char *id_value = json_string_value(id);
 		janus_mutex_lock(&mountpoints_mutex);
 		janus_rtpbroadcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 		if(mp == NULL) {
@@ -1206,19 +1216,16 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			JANUS_LOG(LOG_INFO, "[%s] Stream disabled\n", mp->name);
 			mp->enabled = FALSE;
 			/* Any recording to close? */
-			if(mp->source->arc) {
-				janus_recorder_close(mp->source->arc);
-				JANUS_LOG(LOG_INFO, "[%s] Closed audio recording %s\n", mp->name, mp->source->arc->filename ? mp->source->arc->filename : "??");
-				janus_recorder *tmp = mp->source->arc;
-				mp->source->arc = NULL;
-				janus_recorder_free(tmp);
-			}
-			if(mp->source->vrc) {
-				janus_recorder_close(mp->source->vrc);
-				JANUS_LOG(LOG_INFO, "[%s] Closed video recording %s\n", mp->name, mp->source->vrc->filename ? mp->source->vrc->filename : "??");
-				janus_recorder *tmp = mp->source->vrc;
-				mp->source->vrc = NULL;
-				janus_recorder_free(tmp);
+			janus_recorder **recorders[] = { &mp->arc, &mp->vrc };
+			const char *type[] = { "audio", "video" };
+			_foreach(i, recorders) {
+				if(*recorders[i]) {
+					janus_recorder_close(*recorders[i]);
+					JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", mp->name, type[i], (*recorders[i])->filename ? (*recorders[i])->filename : "??");
+					janus_recorder *tmp = *recorders[i];
+					*recorders[i] = NULL;
+					janus_recorder_free(tmp);
+				}
 			}
 			/* FIXME: Should we notify the listeners, or is this up to the controller application? */
 		}
@@ -1227,7 +1234,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("ok"));
 		goto plugin_response;
-		#endif // enable
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch")) {
@@ -2073,7 +2079,7 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			/* Go! */
 			janus_mutex_lock(&mountpoint->mutex);
 			/* FIXME: @landswellsong for now only first stream is active */
-			if (nstream == 0) 
+			if (nstream == 0)
 			g_list_foreach(mountpoint->listeners, janus_rtpbroadcast_relay_rtp_packet, &packet);
 			janus_mutex_unlock(&mountpoint->mutex);
 			continue;
