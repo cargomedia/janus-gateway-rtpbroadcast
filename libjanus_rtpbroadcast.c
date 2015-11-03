@@ -253,7 +253,6 @@ static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 typedef struct janus_rtpbroadcast_rtp_source_request {
 	char *amcast, *vmcast;
-	uint16_t aport, vport;
 	uint8_t acodec, vcodec;
 	char *artpmap, *vrtpmap;
 	char *afmtp, *vfmtp;
@@ -798,7 +797,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			janus_rtpbroadcast_rtp_source_request req = {
 				NULL, NULL,
 				0, 0,
-				0, 0,
 				NULL, NULL,
 				NULL, NULL,
 			};
@@ -812,18 +810,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			} else {
 				req.amcast = (char *)json_string_value(audiomcast);
-			}
-			json_t *audioport = json_object_get(v, "audioport");
-			if(audioport) {
-				if (!json_is_integer(audioport) || json_integer_value(audioport) < 0) {
-					JANUS_LOG(LOG_ERR, "Invalid element (audioport should be a positive integer)\n");
-					error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-					g_snprintf(error_cause, 512, "Invalid element (audioport should be a positive integer)");
-					goto error;
-				}
-				req.aport = json_integer_value(audioport);
-			} else {
-				req.aport = 0;
 			}
 			json_t *audiopt = json_object_get(v, "audiopt");
 			if(!audiopt) {
@@ -871,18 +857,6 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 				goto error;
 			} else {
 				req.vmcast = (char *)json_string_value(videomcast);
-			}
-			json_t *videoport = json_object_get(v, "videoport");
-			if(videoport) {
-				if (!json_is_integer(videoport) || json_integer_value(videoport) < 0) {
-					JANUS_LOG(LOG_ERR, "Invalid element (videoport should be a positive integer)\n");
-					error_code = JANUS_RTPBROADCAST_ERROR_INVALID_ELEMENT;
-					g_snprintf(error_cause, 512, "Invalid element (videoport should be a positive integer)");
-					goto error;
-				}
-				req.vport = json_integer_value(videoport);
-			} else {
-				req.vport = 0;
 			}
 			json_t *videopt = json_object_get(v, "videopt");
 			if(!videopt) {
@@ -1832,9 +1806,9 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		live_rtp_source->parent = live_rtp;
 
 		live_rtp_source->audio_mcast = req.amcast ? inet_addr(req.amcast) : INADDR_ANY;
-		live_rtp_source->audio_port = req.aport;
+		live_rtp_source->audio_port = 0;
 		live_rtp_source->video_mcast = req.vmcast ? inet_addr(req.vmcast) : INADDR_ANY;
-		live_rtp_source->video_port = req.vport;
+		live_rtp_source->video_port = 0;
 		live_rtp_source->audio_fd = -1;
 		live_rtp_source->video_fd = -1;
 		live_rtp_source->codecs.audio_pt = req.acodec;
