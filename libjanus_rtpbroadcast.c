@@ -751,9 +751,21 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 			json_t *st = json_array();
 			guint i;
 			for (i = 0; i < mp->sources->len; i++) {
+				janus_rtpbroadcast_rtp_source *src = g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i);
 				json_t *v = json_object();
-				json_object_set_new(v, "audioport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->port[AUDIO]));
-				json_object_set_new(v, "videoport", json_integer(g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, i)->port[VIDEO]));
+				json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
+				json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
+
+				json_t *s = json_object();
+				janus_mutex_lock(&src->stats.stat_mutex);
+				json_object_set_new(s, "min", json_real(src->stats.min));
+				json_object_set_new(s, "max", json_real(src->stats.max));
+				json_object_set_new(s, "cur", json_real(src->stats.cur));
+				json_object_set_new(s, "avg", json_real(src->stats.avg));
+				janus_mutex_unlock(&src->stats.stat_mutex);
+
+				json_object_set_new(v, "stats", s);
+
 				json_array_append_new(st, v);
 			}
 			json_object_set_new(ml, "streams", st);
