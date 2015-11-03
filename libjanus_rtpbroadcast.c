@@ -1773,7 +1773,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 	for (i = 0; i < live_rtp->sources->len; i++) {
 		char tempname[256];
 		memset(tempname, 0, 255);
-		g_snprintf(tempname, 255, "%s #i", live_rtp->id, i);
+		g_snprintf(tempname, 255, "%s %d", live_rtp->id, i);
 
 		GError *error = NULL;
 		janus_rtpbroadcast_rtp_relay_thread_data *dt = g_malloc0(sizeof(janus_rtpbroadcast_rtp_relay_thread_data)); /* Memory fred within */
