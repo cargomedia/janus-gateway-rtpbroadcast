@@ -1904,8 +1904,8 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 	JANUS_LOG(LOG_VERB, "Starting streaming relay thread\n");
 	janus_rtpbroadcast_rtp_relay_thread_data *tdata = (janus_rtpbroadcast_rtp_relay_thread_data *)data;
 	janus_rtpbroadcast_mountpoint *mountpoint = tdata->mp;
-	guint i = tdata->i;
-	janus_rtpbroadcast_rtp_source *source = g_array_index(mountpoint->sources, janus_rtpbroadcast_rtp_source*, i);
+	guint nstream = tdata->i;
+	janus_rtpbroadcast_rtp_source *source = g_array_index(mountpoint->sources, janus_rtpbroadcast_rtp_source*, nstream);
   /* Data no longer needed */
 	g_free(data);
 
@@ -2022,6 +2022,8 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			packet.seq_number = ntohs(packet.data->seq_number);
 			/* Go! */
 			janus_mutex_lock(&mountpoint->mutex);
+			/* FIXME: @landswellsong for now only first stream is active */
+			if (nstream == 0)
 			g_list_foreach(mountpoint->listeners, janus_rtpbroadcast_relay_rtp_packet, &packet);
 			janus_mutex_unlock(&mountpoint->mutex);
 			continue;
@@ -2070,6 +2072,8 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			packet.seq_number = ntohs(packet.data->seq_number);
 			/* Go! */
 			janus_mutex_lock(&mountpoint->mutex);
+			/* FIXME: @landswellsong for now only first stream is active */
+			if (nstream == 0) 
 			g_list_foreach(mountpoint->listeners, janus_rtpbroadcast_relay_rtp_packet, &packet);
 			janus_mutex_unlock(&mountpoint->mutex);
 			continue;
