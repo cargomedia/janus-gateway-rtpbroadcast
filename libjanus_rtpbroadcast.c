@@ -378,7 +378,7 @@ typedef struct janus_rtpbroadcast_rtp_relay_packet {
 /* Streaming watchdog/garbage collector (sort of) */
 void *janus_rtpbroadcast_watchdog(void *data);
 void *janus_rtpbroadcast_watchdog(void *data) {
-	JANUS_LOG(LOG_INFO, "Streaming watchdog started\n");
+	JANUS_LOG(LOG_INFO, "CM RTP Broadcast watchdog started\n");
 	gint64 now = 0;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
 		janus_mutex_lock(&sessions_mutex);
@@ -386,7 +386,7 @@ void *janus_rtpbroadcast_watchdog(void *data) {
 		now = janus_get_monotonic_time();
 		if(old_sessions != NULL) {
 			GList *sl = old_sessions;
-			JANUS_LOG(LOG_HUGE, "Checking %d old Streaming sessions...\n", g_list_length(old_sessions));
+			JANUS_LOG(LOG_HUGE, "Checking %d old CM RTP Broadcast sessions...\n", g_list_length(old_sessions));
 			while(sl) {
 				janus_rtpbroadcast_session *session = (janus_rtpbroadcast_session *)sl->data;
 				if(!session) {
@@ -395,7 +395,7 @@ void *janus_rtpbroadcast_watchdog(void *data) {
 				}
 				if(now-session->destroyed >= 5*G_USEC_PER_SEC) {
 					/* We're lazy and actually get rid of the stuff only after a few seconds */
-					JANUS_LOG(LOG_VERB, "Freeing old Streaming session\n");
+					JANUS_LOG(LOG_VERB, "Freeing old CM RTP Broadcast session\n");
 					GList *rm = sl->next;
 					old_sessions = g_list_delete_link(old_sessions, sl);
 					sl = rm;
@@ -412,7 +412,7 @@ void *janus_rtpbroadcast_watchdog(void *data) {
 		/* Iterate on all the mountpoints */
 		if(old_mountpoints != NULL) {
 			GList *sl = old_mountpoints;
-			JANUS_LOG(LOG_HUGE, "Checking %d old Streaming mountpoints...\n", g_list_length(old_mountpoints));
+			JANUS_LOG(LOG_HUGE, "Checking %d old CM RTP Broadcast mountpoints...\n", g_list_length(old_mountpoints));
 			while(sl) {
 				janus_rtpbroadcast_mountpoint *mountpoint = (janus_rtpbroadcast_mountpoint *)sl->data;
 				if(!mountpoint) {
@@ -421,7 +421,7 @@ void *janus_rtpbroadcast_watchdog(void *data) {
 				}
 				if(now-mountpoint->destroyed >= 5*G_USEC_PER_SEC) {
 					/* We're lazy and actually get rid of the stuff only after a few seconds */
-					JANUS_LOG(LOG_VERB, "Freeing old Streaming mountpoint\n");
+					JANUS_LOG(LOG_VERB, "Freeing old CM RTP Broadcast mountpoint\n");
 					GList *rm = sl->next;
 					old_mountpoints = g_list_delete_link(old_mountpoints, sl);
 					sl = rm;
@@ -435,7 +435,7 @@ void *janus_rtpbroadcast_watchdog(void *data) {
 		janus_mutex_unlock(&mountpoints_mutex);
 		g_usleep(500000);
 	}
-	JANUS_LOG(LOG_INFO, "Streaming watchdog stopped\n");
+	JANUS_LOG(LOG_INFO, "CM RTP Broadcast watchdog stopped\n");
 	return NULL;
 }
 
@@ -632,7 +632,7 @@ void janus_rtpbroadcast_destroy_session(janus_plugin_session *handle, int *error
 		*error = -2;
 		return;
 	}
-	JANUS_LOG(LOG_VERB, "Removing streaming session...\n");
+	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
 	if(session->mountpoint) {
 		janus_mutex_lock(&session->mountpoint->mutex);
 		session->mountpoint->listeners = g_list_remove_all(session->mountpoint->listeners, session);
@@ -1370,7 +1370,7 @@ void janus_rtpbroadcast_hangup_media(janus_plugin_session *handle) {
 
 /* Thread to handle incoming messages */
 static void *janus_rtpbroadcast_handler(void *data) {
-	JANUS_LOG(LOG_VERB, "Joining Streaming handler thread\n");
+	JANUS_LOG(LOG_VERB, "Joining CM RTP Broadcast handler thread\n");
 	janus_rtpbroadcast_message *msg = NULL;
 	int error_code = 0;
 	char *error_cause = g_malloc0(1024);
@@ -1466,7 +1466,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 				"v=0\r\no=%s %"SCNu64" %"SCNu64" IN IP4 127.0.0.1\r\n",
 					"-", sessid, version);
 			g_strlcat(sdptemp, buffer, 2048);
-			g_strlcat(sdptemp, "s=Streaming Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
+			g_strlcat(sdptemp, "s=CM RTP Broadcast Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
 			/* FIXME @landswellsong: temporary code for single stream only */
 			/* ASSUMING #sources > 0 */
 			janus_rtpbroadcast_codecs codecs = g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, 0)->codecs;
@@ -1660,7 +1660,7 @@ error:
 		}
 	}
 	g_free(error_cause);
-	JANUS_LOG(LOG_VERB, "Leaving Streaming handler thread\n");
+	JANUS_LOG(LOG_VERB, "Leaving CM RTP Broadcast handler thread\n");
 	return NULL;
 }
 
