@@ -1493,6 +1493,8 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			janus_rtpbroadcast_rtp_source *src = session->source;
 
 			/* TODO Check if user is already watching a stream, if the video is active, etc. */
+			/* TODO @landswellsong cover these original TODOs */
+			/* TODO @landswellsong make sure "switch" and "auto-switch" send SDPs with correct codecs */
 			janus_mutex_lock(&src->mutex);
 			src->listeners = g_list_append(src->listeners, session);
 			janus_mutex_unlock(&src->mutex);
@@ -2158,7 +2160,7 @@ janus_rtpbroadcast_rtp_source* janus_rtpbroadcast_pick_source(GArray *sources, g
 	   no such source found */
 	guint i = 0; janus_rtpbroadcast_rtp_source *src; guint64 source_remb;
 	do {
-		src = g_array_index(sources, janus_rtpbroadcast_rtp_source *, i--);
+		src = g_array_index(sources, janus_rtpbroadcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats.stat_mutex);
 		source_remb = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
