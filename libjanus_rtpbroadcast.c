@@ -1895,6 +1895,7 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 			JANUS_LOG(LOG_ERR, "[%s] Error polling... %d (%s)\n", mountpoint->name, errno, strerror(errno));
 			break;
 		} else if(resfd == 0) {
+			janus_rtpbroadcast_stats_update(&source->stats, 0);
 			/* No data, keep going */
 			continue;
 		}
