@@ -248,10 +248,7 @@ typedef struct janus_rtpbroadcast_mountpoint {
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
 
 	GArray *sources; // of type janus_rtpbroadcast_rtp_source*
-
-	GList/*<unowned janus_rtpbroadcast_session>*/ *listeners;
 	gint64 destroyed;
-	janus_mutex mutex;
 } janus_rtpbroadcast_mountpoint;
 GHashTable *mountpoints;
 static GList *old_mountpoints;
@@ -264,8 +261,12 @@ typedef struct janus_rtpbroadcast_rtp_source {
 	int fd[AV];
 	janus_rtpbroadcast_codecs codecs;
 	janus_rtpbroadcast_stats stats;
-	janus_rtpbroadcast_mountpoint *parent;
+	janus_rtpbroadcast_mountpoint *mp;
+
+	GList/*<unowned janus_rtpbroadcast_session>*/ *listeners;
+	janus_mutex mutex;
 } janus_rtpbroadcast_rtp_source;
+static janus_rtpbroadcast_rtp_source* janus_rtpbroadcast_pick_source(GArray/* janus_rtpbroadcast_rtp_source* */ *, guint64);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -340,7 +341,7 @@ typedef struct janus_rtpbroadcast_context {
 
 typedef struct janus_rtpbroadcast_session {
 	janus_plugin_session *handle;
-	janus_rtpbroadcast_mountpoint *mountpoint;
+	janus_rtpbroadcast_rtp_source *source;
 	guint64 remb;
 	gboolean started;
 	gboolean paused;
@@ -609,7 +610,7 @@ void janus_rtpbroadcast_create_session(janus_plugin_session *handle, int *error)
 		return;
 	}
 	session->handle = handle;
-	session->mountpoint = NULL;	/* This will happen later */
+	session->source = NULL;	/* This will happen later */
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
@@ -635,10 +636,10 @@ void janus_rtpbroadcast_destroy_session(janus_plugin_session *handle, int *error
 		return;
 	}
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
-	if(session->mountpoint) {
-		janus_mutex_lock(&session->mountpoint->mutex);
-		session->mountpoint->listeners = g_list_remove_all(session->mountpoint->listeners, session);
-		janus_mutex_unlock(&session->mountpoint->mutex);
+	if(session->source) {
+		janus_mutex_lock(&session->source->mutex);
+		session->source->listeners = g_list_remove_all(session->source->listeners, session);
+		janus_mutex_unlock(&session->source->mutex);
 	}
 	janus_mutex_lock(&sessions_mutex);
 	if(!session->destroyed) {
@@ -662,10 +663,11 @@ char *janus_rtpbroadcast_query_session(janus_plugin_session *handle) {
 	}
 	/* What is this user watching, if anything? */
 	json_t *info = json_object();
-	json_object_set_new(info, "state", json_string(session->mountpoint ? "watching" : "idle"));
-	if(session->mountpoint) {
-		json_object_set_new(info, "mountpoint_id", json_string(session->mountpoint->id));
-		json_object_set_new(info, "mountpoint_name", session->mountpoint->name ? json_string(session->mountpoint->name) : NULL);
+	json_object_set_new(info, "state", json_string(session->source ? "watching" : "idle"));
+	if(session->source) {
+		/* TODO @landswellsong maybe also dump the # of the stream itself? */
+		json_object_set_new(info, "mountpoint_id", json_string(session->source->mp->id));
+		json_object_set_new(info, "mountpoint_name", session->source->mp->name ? json_string(session->source->mp->name) : NULL);
 	}
 	json_object_set_new(info, "destroyed", json_integer(session->destroyed));
 	char *info_text = json_dumps(info, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
@@ -981,32 +983,38 @@ struct janus_plugin_result *janus_rtpbroadcast_handle_message(janus_plugin_sessi
 		}
 		JANUS_LOG(LOG_VERB, "Request to unmount mountpoint/stream %s\n", id_value);
 		/* FIXME Should we kick the current viewers as well? */
-		janus_mutex_lock(&mp->mutex);
-		GList *viewer = g_list_first(mp->listeners);
-		/* Prepare JSON event */
-		json_t *event = json_object();
-		json_object_set_new(event, "streaming", json_string("event"));
-		json_t *result = json_object();
-		json_object_set_new(result, "status", json_string("stopped"));
-		json_object_set_new(event, "result", result);
-		char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
-		json_decref(event);
-		while(viewer) {
-			janus_rtpbroadcast_session *session = (janus_rtpbroadcast_session *)viewer->data;
-			if(session != NULL) {
-				session->stopping = TRUE;
-				session->started = FALSE;
-				session->paused = FALSE;
-				session->mountpoint = NULL;
-				/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
-				gateway->push_event(session->handle, &janus_rtpbroadcast_plugin, NULL, event_text, NULL, NULL);
-				gateway->close_pc(session->handle);
+		guint i;
+		for (i = 0; i < mp->sources->len; i++) {
+			janus_rtpbroadcast_rtp_source *src = g_array_index(mp->sources,
+			 	janus_rtpbroadcast_rtp_source *, i);
+
+			janus_mutex_lock(&src->mutex);
+			GList *viewer = g_list_first(src->listeners);
+			/* Prepare JSON event */
+			json_t *event = json_object();
+			json_object_set_new(event, "streaming", json_string("event"));
+			json_t *result = json_object();
+			json_object_set_new(result, "status", json_string("stopped"));
+			json_object_set_new(event, "result", result);
+			char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+			json_decref(event);
+			while(viewer) {
+				janus_rtpbroadcast_session *session = (janus_rtpbroadcast_session *)viewer->data;
+				if(session != NULL) {
+					session->stopping = TRUE;
+					session->started = FALSE;
+					session->paused = FALSE;
+					session->source = NULL;
+					/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
+					gateway->push_event(session->handle, &janus_rtpbroadcast_plugin, NULL, event_text, NULL, NULL);
+					gateway->close_pc(session->handle);
+				}
+				src->listeners = g_list_remove_all(src->listeners, session);
+				viewer = g_list_first(src->listeners);
 			}
-			mp->listeners = g_list_remove_all(mp->listeners, session);
-			viewer = g_list_first(mp->listeners);
+			g_free(event_text);
+			janus_mutex_unlock(&src->mutex);
 		}
-		g_free(event_text);
-		janus_mutex_unlock(&mp->mutex);
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
 		if(!mp->destroyed) {
 			mp->destroyed = janus_get_monotonic_time();
@@ -1351,7 +1359,26 @@ void janus_rtpbroadcast_incoming_rtcp(janus_plugin_session *handle, int video, c
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
-		sessid->remb = bw;
+
+		/* TODO @landswellsong maybe some threshold */
+		if (sessid->remb != bw) {
+			sessid->remb = bw;
+
+			janus_rtpbroadcast_rtp_source *src =
+				janus_rtpbroadcast_pick_source(sessid->source->mp->sources, bw);
+
+			/* Check if we really need to switch */
+			if (src != sessid->source) {
+				janus_mutex_lock(&sessid->source->mutex);
+				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
+				sessid->source = src;
+				janus_mutex_unlock(&sessid->source->mutex);
+
+				janus_mutex_lock(&src->mutex);
+				src->listeners = g_list_append(src->listeners, sessid);
+				janus_mutex_unlock(&src->mutex);
+			}
+		}
 	}
 	/* FIXME Maybe we should care about RTCP, but not now */
 }
@@ -1461,11 +1488,14 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			janus_mutex_unlock(&mountpoints_mutex);
 			JANUS_LOG(LOG_VERB, "Request to watch mountpoint/stream %s\n", id_value);
 			session->stopping = FALSE;
-			session->mountpoint = mp;
+
+			session->source = janus_rtpbroadcast_pick_source(mp->sources, session->remb);
+			janus_rtpbroadcast_rtp_source *src = session->source;
+
 			/* TODO Check if user is already watching a stream, if the video is active, etc. */
-			janus_mutex_lock(&mp->mutex);
-			mp->listeners = g_list_append(mp->listeners, session);
-			janus_mutex_unlock(&mp->mutex);
+			janus_mutex_lock(&src->mutex);
+			src->listeners = g_list_append(src->listeners, session);
+			janus_mutex_unlock(&src->mutex);
 			sdp_type = "offer";	/* We're always going to do the offer ourselves, never answer */
 			char sdptemp[2048];
 			memset(sdptemp, 0, 2048);
@@ -1478,9 +1508,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 					"-", sessid, version);
 			g_strlcat(sdptemp, buffer, 2048);
 			g_strlcat(sdptemp, "s=CM RTP Broadcast Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
-			/* FIXME @landswellsong: temporary code for single stream only */
-			/* ASSUMING #sources > 0 */
-			janus_rtpbroadcast_codecs codecs = g_array_index(mp->sources, janus_rtpbroadcast_rtp_source*, 0)->codecs;
+			janus_rtpbroadcast_codecs codecs = src->codecs;
 
 			size_t j;
 			for (j = AUDIO; j <= VIDEO; j++) {
@@ -1735,6 +1763,10 @@ static void janus_rtpbroadcast_rtp_source_free(gpointer src) {
 		janus_rtpbroadcast_port_manager_free(source->port[j]);
 	}
 
+	janus_mutex_lock(&source->mutex);
+	g_list_free(source->listeners);
+	janus_mutex_unlock(&source->mutex);
+
 	g_free(source);
 }
 
@@ -1744,9 +1776,6 @@ static void janus_rtpbroadcast_mountpoint_free(janus_rtpbroadcast_mountpoint *mp
 	g_free(mp->id);
 	g_free(mp->name);
 	g_free(mp->description);
-	janus_mutex_lock(&mp->mutex);
-	g_list_free(mp->listeners);
-	janus_mutex_unlock(&mp->mutex);
 
 	if (mp->sources) /* TODO: @landswellsong: see if this correctly deallocates everything */
 		g_array_free(mp->sources, TRUE);
@@ -1792,9 +1821,12 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 			goto error;
 		}
 
-		live_rtp_source->parent = live_rtp;
+		live_rtp_source->mp = live_rtp;
 		janus_mutex_init(&live_rtp_source->stats.stat_mutex);
 		memset(&live_rtp_source->stats, 0, sizeof(live_rtp_source->stats));
+
+		live_rtp_source->listeners = NULL;
+		janus_mutex_init(&live_rtp_source->mutex);
 
 		for (j = AUDIO; j <= VIDEO; j++) {
 			live_rtp_source->mcast[j] = req.mcast[j] ? inet_addr(req.mcast[j]) : INADDR_ANY;
@@ -1811,9 +1843,7 @@ janus_rtpbroadcast_mountpoint *janus_rtpbroadcast_create_rtp_source(
 		g_array_append_val(live_rtp->sources, live_rtp_source);
 	}
 
-	live_rtp->listeners = NULL;
 	live_rtp->destroyed = 0;
-	janus_mutex_init(&live_rtp->mutex);
 	for (i = 0; i < live_rtp->sources->len; i++) {
 		char tempname[256];
 		memset(tempname, 0, 255);
@@ -1963,11 +1993,9 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 				packet.timestamp = ntohl(packet.data->timestamp);
 				packet.seq_number = ntohs(packet.data->seq_number);
 				/* Go! */
-				janus_mutex_lock(&mountpoint->mutex);
-				/* FIXME: @landswellsong for now only first stream is active */
-				if (nstream == 0)
-				g_list_foreach(mountpoint->listeners, janus_rtpbroadcast_relay_rtp_packet, &packet);
-				janus_mutex_unlock(&mountpoint->mutex);
+				janus_mutex_lock(&source->mutex);
+				g_list_foreach(source->listeners, janus_rtpbroadcast_relay_rtp_packet, &packet);
+				janus_mutex_unlock(&source->mutex);
 				continue;
 			}
 		}
@@ -2114,4 +2142,26 @@ static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *st, int by
 	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (ml - st->start_usec);
 
 	janus_mutex_unlock(&st->stat_mutex);
+}
+
+janus_rtpbroadcast_rtp_source* janus_rtpbroadcast_pick_source(GArray *sources, guint64 remb) {
+	/* If no sources, oh well */
+	if (sources->len <= 0)
+		return NULL;
+
+	/* If we don't know the remb yet, return highest quality stream */
+	if (remb == 0)
+		return g_array_index(sources, janus_rtpbroadcast_rtp_source *, 0);
+
+	/* Pick the source with bitrate less than REMB given or the worst quality if
+	   no such source found */
+	guint i = 0; janus_rtpbroadcast_rtp_source *src; guint64 source_remb;
+	do {
+		src = g_array_index(sources, janus_rtpbroadcast_rtp_source *, i--);
+		janus_mutex_lock(&src->stats.stat_mutex);
+		source_remb = (guint64)src->stats.avg;
+		janus_mutex_unlock(&src->stats.stat_mutex);
+	} while (i < sources->len && remb < source_remb);
+
+	return src;
 }
