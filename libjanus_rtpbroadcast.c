@@ -341,6 +341,7 @@ typedef struct janus_rtpbroadcast_context {
 typedef struct janus_rtpbroadcast_session {
 	janus_plugin_session *handle;
 	janus_rtpbroadcast_mountpoint *mountpoint;
+	guint64 remb;
 	gboolean started;
 	gboolean paused;
 	janus_rtpbroadcast_context context;
@@ -612,6 +613,7 @@ void janus_rtpbroadcast_create_session(janus_plugin_session *handle, int *error)
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
+	session->remb = 0;
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
 	janus_mutex_lock(&sessions_mutex);
@@ -1336,11 +1338,20 @@ void janus_rtpbroadcast_incoming_rtp(janus_plugin_session *handle, int video, ch
 void janus_rtpbroadcast_incoming_rtcp(janus_plugin_session *handle, int video, char *buf, int len) {
 	if(handle == NULL || handle->stopped || g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized))
 		return;
+	/* Get the session */
+	janus_mutex_lock(&sessions_mutex);
+	janus_rtpbroadcast_session *sessid = g_hash_table_lookup(sessions, handle);
+	janus_mutex_unlock(&sessions_mutex);
+
+	/* If session not found, abort, TODO @landswellsong maybe complain in the log */
+	if (sessid == NULL)
+		return;
+
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
-		/* TODO Use this somehow (e.g., notification towards application?) */
+		sessid->remb = bw;
 	}
 	/* FIXME Maybe we should care about RTCP, but not now */
 }
