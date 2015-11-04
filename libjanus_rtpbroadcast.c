@@ -113,6 +113,8 @@ url = RTSP stream URL (only if type=rtsp)
 #include <errno.h>
 #include <sys/poll.h>
 #include <sys/time.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
 
 #include "debug.h"
 #include "apierror.h"
@@ -1911,7 +1913,8 @@ static void *janus_rtpbroadcast_relay_thread(void *data) {
 				}
 				addrlen = sizeof(remote);
 				bytes = recvfrom(source->fd[j], buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
-				janus_rtpbroadcast_stats_update(&source->stats, bytes);
+				/* FIXME @landswellsong are we only expecting IPv4 ? */
+				janus_rtpbroadcast_stats_update(&source->stats, bytes + sizeof(struct ip) + sizeof(struct udphdr));
 				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
 				/* If paused, ignore this packet */
 				if(!mountpoint->enabled)
