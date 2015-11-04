@@ -2089,7 +2089,7 @@ static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *st, int by
 
 	/* If we step over delay, calculate current and compare min/max */
 	if (ml - st->last_avg_usec >= STAT_UPDATE_DELAY) {
-		st->cur = (8.0L*10e6L)*(gdouble)st->bytes_since_last_avg / (ml - st->last_avg_usec);
+		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (ml - st->last_avg_usec);
 		if (st->cur > st->max)
 			st->max = st->cur;
 		if (st->cur < st->min || st->min == 0.0L)
@@ -2100,7 +2100,7 @@ static void janus_rtpbroadcast_stats_update(janus_rtpbroadcast_stats *st, int by
 	}
 
 	/* Re-calculate average regardless */
-	st->avg = (8.0L*10e6L)*(gdouble)st->bytes_since_start / (ml - st->start_usec);
+	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (ml - st->start_usec);
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
