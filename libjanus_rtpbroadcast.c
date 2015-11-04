@@ -1551,8 +1551,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
 		} else if(!strcasecmp(request_text, "start")) {
-			#if 0
-			if(session->mountpoint == NULL) {
+			if(session->source == NULL) {
 				JANUS_LOG(LOG_VERB, "Can't start: no mountpoint set\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
 				g_snprintf(error_cause, 512, "Can't start: no mountpoint set");
@@ -1564,7 +1563,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			/* We wait for the setup_media event to start: on the other hand, it may have already arrived */
 			json_object_set_new(result, "status", json_string(session->started ? "started" : "starting"));
 		} else if(!strcasecmp(request_text, "pause")) {
-			if(session->mountpoint == NULL) {
+			if(session->source == NULL) {
 				JANUS_LOG(LOG_VERB, "Can't pause: no mountpoint set\n");
 				error_code = JANUS_RTPBROADCAST_ERROR_NO_SUCH_MOUNTPOINT;
 				g_snprintf(error_cause, 512, "Can't start: no mountpoint set");
@@ -1575,6 +1574,7 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			result = json_object();
 			json_object_set_new(result, "status", json_string("pausing"));
 		} else if(!strcasecmp(request_text, "switch")) {
+			#if 0
 			/* This listener wants to switch to a different mountpoint
 			 * NOTE: this only works for live RTP streams as of now: you
 			 * cannot, for instance, switch from a live RTP mountpoint to
@@ -1629,7 +1629,6 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			json_object_set_new(result, "id", json_string(id_value));
 			#endif // start
 		} else if(!strcasecmp(request_text, "stop")) {
-			#if 0
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
 				janus_rtpbroadcast_message_free(msg);
@@ -1641,19 +1640,18 @@ static void *janus_rtpbroadcast_handler(void *data) {
 			session->paused = FALSE;
 			result = json_object();
 			json_object_set_new(result, "status", json_string("stopping"));
-			if(session->mountpoint) {
-				janus_mutex_lock(&session->mountpoint->mutex);
+			if(session->source) {
+				janus_mutex_lock(&session->source->mutex);
 				JANUS_LOG(LOG_VERB, "  -- Removing the session from the mountpoint listeners\n");
-				if(g_list_find(session->mountpoint->listeners, session) != NULL) {
+				if(g_list_find(session->source->listeners, session) != NULL) {
 					JANUS_LOG(LOG_VERB, "  -- -- Found!\n");
 				}
-				session->mountpoint->listeners = g_list_remove_all(session->mountpoint->listeners, session);
-				janus_mutex_unlock(&session->mountpoint->mutex);
+				session->source->listeners = g_list_remove_all(session->source->listeners, session);
+				janus_mutex_unlock(&session->source->mutex);
 			}
-			session->mountpoint = NULL;
+			session->source = NULL;
 			/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
 			gateway->close_pc(session->handle);
-			#endif // stop
 		} else {
 			JANUS_LOG(LOG_VERB, "Unknown request '%s'\n", request_text);
 			error_code = JANUS_RTPBROADCAST_ERROR_INVALID_REQUEST;
