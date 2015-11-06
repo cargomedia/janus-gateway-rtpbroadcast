@@ -1213,58 +1213,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto plugin_response;
 		}
 		#endif // record
-	} else if(!strcasecmp(request_text, "enable") || !strcasecmp(request_text, "disable")) {
-		/* A request to enable/disable a mountpoint */
-		json_t *id = json_object_get(root, "id");
-		if(!id) {
-			JANUS_LOG(LOG_ERR, "Missing element (id)\n");
-			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
-			g_snprintf(error_cause, 512, "Missing element (id)");
-			goto error;
-		}
-		if(!json_is_string(id)) {
-			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
-			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
-			goto error;
-		}
-		const char *id_value = json_string_value(id);
-		janus_mutex_lock(&mountpoints_mutex);
-		cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
-		if(mp == NULL) {
-			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
-			error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
-			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
-			goto error;
-		}
-		if(!strcasecmp(request_text, "enable")) {
-			/* Enable a previously disabled mountpoint */
-			JANUS_LOG(LOG_INFO, "[%s] Stream enabled\n", mp->name);
-			mp->enabled = TRUE;
-			/* FIXME: Should we notify the listeners, or is this up to the controller application? */
-		} else {
-			/* Disable a previously enabled mountpoint */
-			JANUS_LOG(LOG_INFO, "[%s] Stream disabled\n", mp->name);
-			mp->enabled = FALSE;
-			/* Any recording to close? */
-			size_t j;
-			for (j = AUDIO; j <= VIDEO; j++) {
-				if(mp->rc[j]) {
-					janus_recorder_close(mp->rc[j]);
-					JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", mp->name, av_names[j], mp->rc[j]->filename ? mp->rc[j]->filename : "??");
-					janus_recorder *tmp = mp->rc[j];
-					mp->rc[j] = NULL;
-					janus_recorder_free(tmp);
-				}
-			}
-			/* FIXME: Should we notify the listeners, or is this up to the controller application? */
-		}
-		janus_mutex_unlock(&mountpoints_mutex);
-		/* Send a success response back */
-		response = json_object();
-		json_object_set_new(response, "streaming", json_string("ok"));
-		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch")) {
