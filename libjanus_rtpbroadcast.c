@@ -203,7 +203,7 @@ static void *cm_rtpbcast_relay_thread(void *data);
 
 			Note, iterator variable exported in the current scope;
 			*/
-#define _foreach(var, container) size_t var; for (var = 0; var < sizeof(container)/sizeof(container[0]); i++)
+#define _foreach(var, container) size_t var; for (var = 0; var < sizeof(container)/sizeof(container[0]); var++)
 
 /* To remove unnecessary duplication all over, all things are arrays of 2 now
  	 i.e. instead of audio_port you have port[AUDIO]
@@ -342,6 +342,7 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
+	gboolean super_user;
 	guint64 remb;
 	gboolean started;
 	gboolean paused;
@@ -352,7 +353,10 @@ typedef struct cm_rtpbcast_session {
 } cm_rtpbcast_session;
 static GHashTable *sessions;
 static GList *old_sessions;
+static GList *super_sessions;
 static janus_mutex sessions_mutex;
+static void cm_rtpbcast_notify_supers(json_t* );
+static void cm_rtpbcast_notify_session(gpointer, gpointer);
 
 /* Packets we get from gstreamer and relay */
 typedef struct cm_rtpbcast_rtp_relay_packet {
@@ -498,6 +502,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
+	super_sessions = NULL;
 	janus_mutex_init(&sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) cm_rtpbcast_message_free);
 	/* This is the callback we'll need to invoke to contact the gateway */
@@ -615,6 +620,8 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = 0;
+	session->super_user = FALSE;
+
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
 	janus_mutex_lock(&sessions_mutex);
@@ -645,6 +652,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
 		g_hash_table_remove(sessions, handle);
+		super_sessions = g_list_remove_all(super_sessions, session);
 		/* Cleaning up and removing the session is done in a lazy way */
 		old_sessions = g_list_append(old_sessions, session);
 	}
@@ -739,7 +747,35 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	}
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
-	if(!strcasecmp(request_text, "list")) {
+	if(!strcasecmp(request_text, "superuser")) {
+		/* TODO @landswellsong layer authentication over that */
+		json_t *value = json_object_get(root, "value");
+		if(!value) {
+			JANUS_LOG(LOG_ERR, "Missing element (value)\n");
+			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+			g_snprintf(error_cause, 512, "Missing element (value)");
+			goto error;
+		}
+		if(!json_is_boolean(value)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (value should be boolean)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (value should be boolean)");
+			goto error;
+		}
+
+		session->super_user = json_is_true(value);
+
+		if (session->super_user) {
+			super_sessions = g_list_prepend(super_sessions, session);
+		} else {
+			super_sessions = g_list_remove_all(super_sessions, session);
+		}
+
+		response = json_object();
+		json_object_set_new(response, "streaming", json_string("superuser"));
+		json_object_set_new(response, "value", json_boolean(session->super_user));
+		goto plugin_response;
+	} else if(!strcasecmp(request_text, "list")) {
 		json_t *list = json_array();
 		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
 		/* Return a list of all available mountpoints */
@@ -2059,7 +2095,7 @@ void cm_rtpbcast_port_manager_init(guint minport, guint maxport) {
 	guint len = port_manager.ports_available = maxport - minport + 1;
 
 	while (len > 0) {
-		GList *el = g_list_nth(straight, random() % (len--));
+		GList *el = g_list_nth(straight, g_random_int() % (len--));
 		port_manager.free_ports = g_list_prepend(port_manager.free_ports, GUINT_TO_POINTER(el->data));
 		straight = g_list_delete_link(straight, el);
 	}
@@ -2167,4 +2203,73 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	} while (i < sources->len && remb < source_remb);
 
 	return src;
+}
+
+typedef struct cm_rtpbcast_evtdata {
+  char transaction_id[13];
+	json_t *evt;
+} cm_rtpbcast_evtdata;
+
+static char randomAZ09() {
+	/* [0-9A-Za-z]* basically picking characters from three intervals */
+	char intv[][2] = {
+		{'0','9'},
+	  {'A','Z'},
+		{'a','z'}
+	};
+	static size_t total = 0;
+
+	/* First run, calculate how much symbols we get to pick from */
+	if (total == 0) {
+		_foreach(i, intv)
+			total += intv[i][1]-intv[i][0];
+	}
+
+	/* Picking a random number */
+	size_t n = g_random_int() % total;
+
+	/* Searching which interval it belongs to */
+	_foreach(j, intv)
+		if (n < intv[j][1]-intv[j][0])
+			return intv[j][0]+n;
+		else
+			n-=intv[j][1]-intv[j][0];
+
+	return '?'; /* Ideally will never happen */
+}
+
+void cm_rtpbcast_notify_supers(json_t* response) {
+	if (!response)
+		return;
+
+	/* Adding timestamp and transaction id */
+	cm_rtpbcast_evtdata evtdata;
+	evtdata.transaction_id[12] = 0;
+	size_t i;
+	for (i = 0; i < 12; i++)
+		evtdata.transaction_id[i] = randomAZ09();
+
+	evtdata.evt = json_deep_copy(response);
+	guint64 tm = janus_get_monotonic_time();
+	json_object_set_new(evtdata.evt, "timestamp", json_integer(tm));
+	json_object_set_new(evtdata.evt, "superuser", json_true());
+
+	/* Iterating over the serssions */
+	g_list_foreach(super_sessions, cm_rtpbcast_notify_session, &evtdata);
+
+	json_decref(evtdata.evt);
+}
+
+void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
+	cm_rtpbcast_session *session = data;
+	cm_rtpbcast_evtdata *event = user_data;
+
+	if (!session || !event)
+		return;
+
+	char *event_text = json_dumps(event->evt, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+	JANUS_LOG(LOG_VERB, "Pushing event: %s\n", event_text);
+	int ret = gateway->push_event(session->handle, &cm_rtpbcast_plugin, event->transaction_id, event_text, NULL, NULL);
+	JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
+	g_free(event_text);
 }
