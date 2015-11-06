@@ -342,7 +342,7 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
-	gboolean super;
+	gboolean super_user;
 	guint64 remb;
 	gboolean started;
 	gboolean paused;
@@ -620,7 +620,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = 0;
-	session->super = FALSE;
+	session->super_user = FALSE;
 
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
@@ -747,7 +747,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	}
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
-	if(!strcasecmp(request_text, "super")) {
+	if(!strcasecmp(request_text, "superuser")) {
 		/* TODO @landswellsong layer authentication over that */
 		json_t *value = json_object_get(root, "value");
 		if(!value) {
@@ -763,17 +763,17 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		session->super = json_is_true(value);
+		session->super_user = json_is_true(value);
 
-		if (session->super) {
+		if (session->super_user) {
 			super_sessions = g_list_prepend(super_sessions, session);
 		} else {
 			super_sessions = g_list_remove_all(super_sessions, session);
 		}
 
 		response = json_object();
-		json_object_set_new(response, "streaming", json_string("super"));
-		json_object_set_new(response, "value", json_boolean(session->super));
+		json_object_set_new(response, "streaming", json_string("superuser"));
+		json_object_set_new(response, "value", json_boolean(session->super_user));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "list")) {
 		json_t *list = json_array();
@@ -2252,6 +2252,7 @@ void cm_rtpbcast_notify_supers(json_t* response) {
 	evtdata.evt = json_deep_copy(response);
 	guint64 tm = janus_get_monotonic_time();
 	json_object_set_new(evtdata.evt, "timestamp", json_integer(tm));
+	json_object_set_new(evtdata.evt, "superuser", json_true());
 
 	/* Iterating over the serssions */
 	g_list_foreach(super_sessions, cm_rtpbcast_notify_session, &evtdata);

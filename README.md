@@ -4,7 +4,7 @@ janus-gateway plugin(s) for https://github.com/cargomedia/cm-janus
 # Supersessions
 
 In order to receive notifications about events (mostly recording/thumbnailing
-for now), send a `super` command with boolean `value`:
+for now), send a `superuser` command with boolean `value`:
 
 ```
 {
@@ -13,7 +13,7 @@ for now), send a `super` command with boolean `value`:
   "transaction": "deadbeef",
   "janus": "message",
   "body": {
-    "request" : "super",
+    "request" : "superuser",
      "value": true
   }
 }
@@ -32,7 +32,8 @@ Afterwards this session will be notified about the events like this:
       "data": {
          "streaming": "destroyed",
          "destroyed": "Ababagalamaga",
-         "timestamp": 91875791143
+         "timestamp": 91875791143,
+         "superuser": true
       }
    }
 }
