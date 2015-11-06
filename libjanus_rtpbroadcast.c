@@ -986,10 +986,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		/* If we need recording, start it */
-		if (mp->recorded)
-			cm_rtpbcast_start_recording(mp);
-
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("created"));
@@ -1849,6 +1845,11 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 	}
 
 	live_rtp->destroyed = 0;
+
+	/* If we need recording, start it before creating threads */
+	if (recorded)
+		cm_rtpbcast_start_recording(live_rtp);
+
 	for (i = 0; i < live_rtp->sources->len; i++) {
 		char tempname[256];
 		memset(tempname, 0, 255);
