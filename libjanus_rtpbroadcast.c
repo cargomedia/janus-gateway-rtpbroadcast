@@ -479,8 +479,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 12000;
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
-	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%s-%d-%s");
-	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%s-%d-%s");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%s-%llu-%s");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%s-%llu-%s");
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -2313,8 +2313,11 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 		if(mnt->rc[j] == NULL) {
 			JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", av_names[j]);
 		} else {
+			char fname[512];
+			g_snprintf(fname, 512, "%s/%s", mnt->rc[j]->dir? mnt->rc[j]->dir : "",
+				mnt->rc[j]->filename? mnt->rc[j]->filename : "??");
 			JANUS_LOG(LOG_INFO, "[%s] Recording %s started\n", mnt->id, av_names[j]);
-			json_object_set_new(response, av_names[j], json_string(mnt->rc[j]->filename ? mnt->rc[j]->filename : "??"));
+			json_object_set_new(response, av_names[j], json_string(fname));
 		}
 	}
 
@@ -2337,8 +2340,10 @@ void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *mnt) {
 	size_t j;
 	for (j = AUDIO; j <= VIDEO; j++) {
 		if (mnt->rc[j]) {
+			char fname[512];
+			g_snprintf(fname, 512, "%s/%s", mnt->rc[j]->dir? mnt->rc[j]->dir : "",
+				mnt->rc[j]->filename? mnt->rc[j]->filename : "??");
 			janus_recorder_close(mnt->rc[j]);
-			const char *fname = mnt->rc[j]->filename ? mnt->rc[j]->filename : "??";
 			json_object_set_new(response, av_names[j], json_string(fname));
 			JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", mnt->id, av_names[j], fname);
 			janus_recorder *tmp = mnt->rc[j];
