@@ -255,7 +255,7 @@ typedef struct cm_rtpbcast_mountpoint {
 
 	gboolean recorded; 		  /* Only sources[0] is recorded by default */
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
-	janus_recorder *thm_rc;	/* Thumbnailing recorder */
+	janus_recorder *trc[1];	/* Thumbnailing recorder, array for generic code sake */
 	guint64 last_thumbnail; /* Positon (frames/time) of last thumbnail taken */
 
 	GArray *sources; // of type cm_rtpbcast_rtp_source*
@@ -1126,6 +1126,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			if(mp->rc[AUDIO] || mp->rc[VIDEO])
 				cm_rtpbcast_stop_recording(mp);
 
+			if(mp->trc[0])
+				cm_rtpbcast_stop_thumbnailing(mp);
+
 			mp->destroyed = janus_get_monotonic_time();
 			g_hash_table_remove(mountpoints, id_value);
 			/* Cleaning up and removing the mountpoint is done in a lazy way */
@@ -1862,9 +1865,11 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 	live_rtp->description = g_strdup(desc != NULL ? desc : (name ? name : tempname));
 	live_rtp->enabled = TRUE;
 	live_rtp->recorded = recorded;
+	live_rtp->last_thumbnail = janus_get_monotonic_time();
 
 	live_rtp->rc[AUDIO] = NULL;
 	live_rtp->rc[VIDEO] = NULL;
+	live_rtp->trc[0] = NULL;
 
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_rtp_source*), requests->len);
@@ -2049,10 +2054,33 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				packet.data->type = source->codecs.pt[j];
 				/* Is there a recorder? */
 				/* FIXME @landswellsong support arbitrary stream recording */
+				/* FIXME @landswellsong probably put mutexes around recorders */
 				if(nstream == 0 && mountpoint->rc[j]) {
-					JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
+					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
+					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
 					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
 				}
+
+				if (nstream == 0 && j == VIDEO) {
+					/* Is it time to do thumbnailing? */
+					guint64 ml = janus_get_monotonic_time();
+					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
+						+ cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
+							cm_rtpbcast_start_thumbnailing(mountpoint);
+							mountpoint->last_thumbnail = ml;
+					}
+
+					/* After the call it might update */
+					if (mountpoint->trc[0])
+						janus_recorder_save_frame(mountpoint->trc[0], buffer, bytes);
+
+					/* Is it time to stop the thumbnailing? */
+					if (mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
+						+ cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
+						cm_rtpbcast_stop_thumbnailing(mountpoint);
+					}
+				}
+
 				/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 				packet.timestamp = ntohl(packet.data->timestamp);
 				packet.seq_number = ntohs(packet.data->seq_number);
@@ -2416,10 +2444,27 @@ void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *mnt) {
 	);
 }
 
-// void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *) {
-//
-// }
-//
-// void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *) {
-//
-// }
+void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
+	gboolean is_video[] = { TRUE };
+	const char *types[] = { "thumb"};
+	cm_rtpbcast_generic_start_recording(
+		mnt->trc,
+		0, 0,
+		cm_rtpbcast_settings.thumbnailing_pattern,
+		mnt->id,
+		types,
+		"thumbnailing-started",
+		is_video
+	);
+}
+
+void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
+	const char *types[] = { "thumb"};
+	cm_rtpbcast_generic_stop_recording(
+		mnt->trc,
+		0, 0,
+		mnt->id,
+		types,
+		"thumbnailing-finished"
+	);
+}
