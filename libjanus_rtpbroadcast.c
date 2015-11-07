@@ -479,8 +479,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 12000;
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
-	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%s-%llu-%s");
-	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%s-%llu-%s");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%1$s-%2$llu-%3$s");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%1$s-%2$llu-%3$s");
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
