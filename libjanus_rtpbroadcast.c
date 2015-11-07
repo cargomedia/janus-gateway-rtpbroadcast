@@ -214,6 +214,13 @@ static void *cm_rtpbcast_relay_thread(void *data);
 #define AV		2
 const char *av_names[] = { "audio", "video" };
 
+static struct {
+	guint minport, maxport;
+	const char *archive_path;
+	const char *recording_pattern;
+	const char *thumbnailing_pattern;
+} cm_rtpbcast_settings;
+
 typedef struct cm_rtpbcast_codecs {
 	gint pt[AV];
 	char *rtpmap[AV];
@@ -468,7 +475,12 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	if(config != NULL)
 		janus_config_print(config);
 
-	guint minport = 8000, maxport = 12000;
+	/* Defauts */
+	cm_rtpbcast_settings.minport = 8000;
+	cm_rtpbcast_settings.maxport = 12000;
+	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%s-%d-%s");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%s-%d-%s");
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -478,22 +490,52 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	janus_mutex_init(&mountpoints_mutex);
 	/* Parse configuration to populate the mountpoints */
 	if(config != NULL) {
-		const char *inames [] = { "minport", "maxport" };
-		guint *ivars [] = { &minport, &maxport };
-		guint i;
+		/* Integers */
+		{
+			const char *inames [] = {
+				"minport",
+				"maxport"
+			};
+			guint *ivars [] = {
+				&cm_rtpbcast_settings.minport,
+				&cm_rtpbcast_settings.maxport
+			};
 
-		for (i = 0; i < sizeof(ivars)/sizeof(guint*); i++) {
-			janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
-			if (itm && itm->value) {
-				guint res = g_ascii_strtoull(itm->value, NULL, 10);
-				if (res != 0)
-					*ivars[i] = res;
+			_foreach(i, ivars) {
+				janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
+				if (itm && itm->value) {
+					guint res = g_ascii_strtoull(itm->value, NULL, 10);
+					if (res != 0)
+						*ivars[i] = res;
+				}
+			}
+		}
+		/* Strings */
+		{
+			const char *inames [] = {
+			 "archive_path",
+			 "recording_pattern",
+			 "thumbnailing_pattern"
+		  };
+			const char **ivars [] = {
+				&cm_rtpbcast_settings.archive_path,
+				&cm_rtpbcast_settings.recording_pattern,
+				&cm_rtpbcast_settings.thumbnailing_pattern
+			};
+
+			_foreach(i, ivars) {
+				janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
+				if (itm && itm->value) {
+					g_free((gpointer)*ivars[i]);
+					*ivars[i] = g_strdup(itm->value);
+				}
 			}
 		}
 
-		if(minport > maxport) {
+		if(cm_rtpbcast_settings.minport > cm_rtpbcast_settings.maxport) {
 			g_atomic_int_set(&initialized, 0);
-			JANUS_LOG(LOG_ERR, "Configuration error: minport %d is bigger than maxport %d\n", minport, maxport);
+			JANUS_LOG(LOG_ERR, "Configuration error: minport %d is bigger than maxport %d\n",
+				cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
 			return -1;
 		}
 
@@ -501,7 +543,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		janus_config_destroy(config);
 		config = NULL;
 	}
-	cm_rtpbcast_port_manager_init(minport, maxport);
+	cm_rtpbcast_port_manager_init(cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -571,6 +613,11 @@ void cm_rtpbcast_destroy(void) {
 	g_async_queue_unref(messages);
 	messages = NULL;
 	sessions = NULL;
+
+	/* Freeing configuration strings */
+	g_free((gpointer)cm_rtpbcast_settings.archive_path);
+	g_free((gpointer)cm_rtpbcast_settings.recording_pattern);
+	g_free((gpointer)cm_rtpbcast_settings.thumbnailing_pattern);
 
 	g_atomic_int_set(&initialized, 0);
 	g_atomic_int_set(&stopping, 0);
@@ -2261,8 +2308,8 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 	guint64 mt = janus_get_monotonic_time();
 	for (j = AUDIO; j <= VIDEO; j++) {
 		char buf[512];
-		g_snprintf(buf, 512, "rec-%s-%ld-%s.rtp", mnt->id, mt, av_names[j]);
-		mnt->rc[j] = janus_recorder_create(NULL, j == VIDEO, (char *)buf);
+		g_snprintf(buf, 512, cm_rtpbcast_settings.recording_pattern, mnt->id, mt, av_names[j]);
+		mnt->rc[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, j == VIDEO, (char *)buf);
 		if(mnt->rc[j] == NULL) {
 			JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", av_names[j]);
 		} else {

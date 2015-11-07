@@ -2,3 +2,15 @@
 ; Port range for automatic port generation
 minport = 8000
 maxport = 9000
+
+; Path for recording and thumbnailing
+; archive_path = < path >
+
+; printf pattern for recordings filenames
+; #1 is streamChannelKey (string)
+; #2 is timestamp (guint64)
+; #3 is type ("audio" or "video" string)
+; recording_pattern = < printf style string >
+
+; same for thumbnails
+; thumbnailing_pattern = < printf style string >
