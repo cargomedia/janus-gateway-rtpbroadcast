@@ -219,6 +219,8 @@ static struct {
 	const char *archive_path;
 	const char *recording_pattern;
 	const char *thumbnailing_pattern;
+	guint thumbnailing_interval;
+	guint thumbnailing_duration;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -253,6 +255,8 @@ typedef struct cm_rtpbcast_mountpoint {
 
 	gboolean recorded; 		  /* Only sources[0] is recorded by default */
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
+	janus_recorder *trc[1];	/* Thumbnailing recorder, array for generic code sake */
+	guint64 last_thumbnail; /* Positon (frames/time) of last thumbnail taken */
 
 	GArray *sources; // of type cm_rtpbcast_rtp_source*
 	gint64 destroyed;
@@ -263,6 +267,8 @@ janus_mutex mountpoints_mutex;
 /* TODO @landswellsong per-source recording */
 static void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *);
 static void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *);
+static void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *);
+static void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *);
 
 typedef struct cm_rtpbcast_rtp_source {
 	gboolean active;
@@ -477,10 +483,12 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Defauts */
 	cm_rtpbcast_settings.minport = 8000;
-	cm_rtpbcast_settings.maxport = 12000;
+	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
-	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%s-%llu-%s");
-	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%s-%llu-%s");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%1$s-%2$llu-%3$s");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%1$s-%2$llu-%3$s");
+	cm_rtpbcast_settings.thumbnailing_interval = 60;
+	cm_rtpbcast_settings.thumbnailing_duration = 10;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -498,7 +506,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
-				&cm_rtpbcast_settings.maxport
+				&cm_rtpbcast_settings.maxport,
+				&cm_rtpbcast_settings.thumbnailing_interval,
+				&cm_rtpbcast_settings.thumbnailing_duration
 			};
 
 			_foreach(i, ivars) {
@@ -1115,6 +1125,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			/* If it's recording, stop it */
 			if(mp->rc[AUDIO] || mp->rc[VIDEO])
 				cm_rtpbcast_stop_recording(mp);
+
+			if(mp->trc[0])
+				cm_rtpbcast_stop_thumbnailing(mp);
 
 			mp->destroyed = janus_get_monotonic_time();
 			g_hash_table_remove(mountpoints, id_value);
@@ -1852,9 +1865,11 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 	live_rtp->description = g_strdup(desc != NULL ? desc : (name ? name : tempname));
 	live_rtp->enabled = TRUE;
 	live_rtp->recorded = recorded;
+	live_rtp->last_thumbnail = janus_get_monotonic_time();
 
 	live_rtp->rc[AUDIO] = NULL;
 	live_rtp->rc[VIDEO] = NULL;
+	live_rtp->trc[0] = NULL;
 
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_rtp_source*), requests->len);
@@ -2039,10 +2054,33 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				packet.data->type = source->codecs.pt[j];
 				/* Is there a recorder? */
 				/* FIXME @landswellsong support arbitrary stream recording */
+				/* FIXME @landswellsong probably put mutexes around recorders */
 				if(nstream == 0 && mountpoint->rc[j]) {
-					JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
+					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
+					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
 					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
 				}
+
+				if (nstream == 0 && j == VIDEO) {
+					/* Is it time to do thumbnailing? */
+					guint64 ml = janus_get_monotonic_time();
+					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
+						+ cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
+							cm_rtpbcast_start_thumbnailing(mountpoint);
+							mountpoint->last_thumbnail = ml;
+					}
+
+					/* After the call it might update */
+					if (mountpoint->trc[0])
+						janus_recorder_save_frame(mountpoint->trc[0], buffer, bytes);
+
+					/* Is it time to stop the thumbnailing? */
+					if (mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
+						+ cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
+						cm_rtpbcast_stop_thumbnailing(mountpoint);
+					}
+				}
+
 				/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 				packet.timestamp = ntohl(packet.data->timestamp);
 				packet.seq_number = ntohs(packet.data->seq_number);
@@ -2292,68 +2330,141 @@ void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
 	g_free(event_text);
 }
 
-void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
-	/* FIXME @landswellsong which mutex we must lock? */
-	/* TODO @landswellsong error reporting upward maybe? */
-	if(mnt->rc[AUDIO] || mnt->rc[VIDEO])
+/* Generic functions for both recording and thumbnailing */
+static void cm_rtpbcast_generic_start_recording(
+		janus_recorder *recorders[],		/* Array or pointer to recorders */
+		size_t start, size_t end, 			/* Inclusive, which ones to process */
+		const char *fname_pattern,			/* Printf pattern for filename */
+		const char *id,									/* streamChannelKey */
+		const char *types[],						/* Type labels, per recorder */
+		const char *event_name,				  /* JSON event name for supersession notification */
+		gboolean is_video[]							/* Whether stream is video, per recorder */
+	) {
+		/* FIXME @landswellsong which mutex we must lock? */
+		/* TODO @landswellsong error reporting upward maybe? */
+		size_t j; gboolean res = FALSE;
+		for (j = start; j <= end; j++)
+			res |= (recorders[j] != NULL);
+		if (res)
+			return;
+
+		/* Event for superssessions */
+		json_t *response = json_object();
+		json_object_set_new(response, "streaming", json_string(event_name));
+		json_object_set_new(response, "id", json_string(id));
+
+		/* Assuming streams contain both video and audio */
+		guint64 mt = janus_get_monotonic_time();
+		for (j = start; j <= end; j++) {
+			char buf[512];
+			g_snprintf(buf, 512, fname_pattern, id, mt, types[j]);
+			recorders[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], (char *)buf);
+			if(recorders[j] == NULL) {
+				JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", types[j]);
+			} else {
+				char fname[512];
+				g_snprintf(fname, 512, "%s/%s", recorders[j]->dir? recorders[j]->dir : "",
+					recorders[j]->filename? recorders[j]->filename : "??");
+				JANUS_LOG(LOG_INFO, "[%s] Recording %s started\n", id, types[j]);
+				json_object_set_new(response, types[j], json_string(fname));
+			}
+		}
+
+		/* Note that we are recording and notify superssessions */
+		res = FALSE;
+		for (j = start; j <= end; j++)
+			res |= (recorders[j] != NULL);
+		if (res)
+			cm_rtpbcast_notify_supers(response);
+
+		json_decref(response);
+}
+
+static void cm_rtpbcast_generic_stop_recording(
+	janus_recorder *recorders[],		/* Array or pointer to recorders */
+	size_t start, size_t end, 			/* Inclusive, which ones to process */
+	const char *id,									/* streamChannelKey */
+	const char *types[],						/* Type labels, per recorder */
+	const char *event_name				  /* JSON event name for supersession notification */
+	) {
+	size_t j; gboolean res = TRUE;
+	for (j = start; j <= end; j++)
+		res &= (!recorders[j]);
+	if (res)
 		return;
 
 	/* Event for superssessions */
 	json_t *response = json_object();
-	json_object_set_new(response, "streaming", json_string("archive-started"));
-	json_object_set_new(response, "id", json_string(mnt->id));
+	json_object_set_new(response, "streaming", json_string(event_name));
+	json_object_set_new(response, "id", json_string(id));
 
-	/* Assuming streams contain both video and audio */
-	size_t j;
-	guint64 mt = janus_get_monotonic_time();
-	for (j = AUDIO; j <= VIDEO; j++) {
-		char buf[512];
-		g_snprintf(buf, 512, cm_rtpbcast_settings.recording_pattern, mnt->id, mt, av_names[j]);
-		mnt->rc[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, j == VIDEO, (char *)buf);
-		if(mnt->rc[j] == NULL) {
-			JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", av_names[j]);
-		} else {
+	for (j = start; j <= end; j++) {
+		if (recorders[j]) {
 			char fname[512];
-			g_snprintf(fname, 512, "%s/%s", mnt->rc[j]->dir? mnt->rc[j]->dir : "",
-				mnt->rc[j]->filename? mnt->rc[j]->filename : "??");
-			JANUS_LOG(LOG_INFO, "[%s] Recording %s started\n", mnt->id, av_names[j]);
-			json_object_set_new(response, av_names[j], json_string(fname));
+			g_snprintf(fname, 512, "%s/%s", recorders[j]->dir? recorders[j]->dir : "",
+				recorders[j]->filename? recorders[j]->filename : "??");
+			janus_recorder_close(recorders[j]);
+			json_object_set_new(response, types[j], json_string(fname));
+			JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", id, types[j], fname);
+			janus_recorder *tmp = recorders[j];
+			recorders[j] = NULL;
+			janus_recorder_free(tmp);
 		}
 	}
 
-	/* Note that we are recording and notify superssessions */
-	if (mnt->rc[AUDIO] || mnt->rc[VIDEO])
+	res = TRUE;
+	for (j = start; j <= end; j++)
+		res &= (!recorders[j]);
+	if (res)
 		cm_rtpbcast_notify_supers(response);
 
 	json_decref(response);
 }
 
+void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
+	gboolean is_video[] = { FALSE, TRUE };
+	cm_rtpbcast_generic_start_recording(
+		mnt->rc,
+		AUDIO, VIDEO,
+		cm_rtpbcast_settings.recording_pattern,
+		mnt->id,
+		av_names,
+		"archive-started",
+		is_video
+	);
+}
+
 void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *mnt) {
-	if(!mnt->rc[AUDIO] && !mnt->rc[VIDEO])
-		return;
+	cm_rtpbcast_generic_stop_recording(
+		mnt->rc,
+		AUDIO, VIDEO,
+		mnt->id,
+		av_names,
+		"archive-finished"
+	);
+}
 
-	/* Event for superssessions */
-	json_t *response = json_object();
-	json_object_set_new(response, "streaming", json_string("archive-finished"));
-	json_object_set_new(response, "id", json_string(mnt->id));
+void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
+	gboolean is_video[] = { TRUE };
+	const char *types[] = { "thumb"};
+	cm_rtpbcast_generic_start_recording(
+		mnt->trc,
+		0, 0,
+		cm_rtpbcast_settings.thumbnailing_pattern,
+		mnt->id,
+		types,
+		"thumbnailing-started",
+		is_video
+	);
+}
 
-	size_t j;
-	for (j = AUDIO; j <= VIDEO; j++) {
-		if (mnt->rc[j]) {
-			char fname[512];
-			g_snprintf(fname, 512, "%s/%s", mnt->rc[j]->dir? mnt->rc[j]->dir : "",
-				mnt->rc[j]->filename? mnt->rc[j]->filename : "??");
-			janus_recorder_close(mnt->rc[j]);
-			json_object_set_new(response, av_names[j], json_string(fname));
-			JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", mnt->id, av_names[j], fname);
-			janus_recorder *tmp = mnt->rc[j];
-			mnt->rc[j] = NULL;
-			janus_recorder_free(tmp);
-		}
-	}
-
-	if (!mnt->rc[AUDIO] && !mnt->rc[VIDEO])
-		cm_rtpbcast_notify_supers(response);
-
-	json_decref(response);
+void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
+	const char *types[] = { "thumb"};
+	cm_rtpbcast_generic_stop_recording(
+		mnt->trc,
+		0, 0,
+		mnt->id,
+		types,
+		"thumbnailing-finished"
+	);
 }
