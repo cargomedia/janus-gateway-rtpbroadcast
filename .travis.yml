@@ -21,10 +21,7 @@ before_install:
   - cd ..
   - cd janus-gateway
   - ./autogen.sh
-  - ./configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --disable-websockets \
-    --disable-data-channels --disable-plugin-audiobridge --disable-plugin-echotest \
-    --disable-plugin-recordplay --disable-plugin-sip --disable-plugin-streaming \
-    --disable-plugin-videocall --disable-plugin-videoroom --disable-plugin-voicemail
+  - ./configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --disable-websockets --disable-data-channels --disable-plugin-audiobridge --disable-plugin-echotest --disable-plugin-recordplay --disable-plugin-sip --disable-plugin-streaming --disable-plugin-videocall --disable-plugin-videoroom --disable-plugin-voicemail
   - make
   - sudo make install
   - cd ..
