@@ -7,6 +7,8 @@ compiler:
 before_install:
   - sudo add-apt-repository ppa:dns/gnu --yes
   - sudo apt-get update -qq
+  - sudo apt-get install -y libmicrohttpd-dev libjansson-dev libnice-dev libssl-dev libsrtp-dev
+  - sudo apt-get install -y libglib2.0-dev libini-config-dev libcollection-dev gengetopt
   - sudo apt-get install -y libtool autoconf automake make bison flex gcc cmake glib-2.0 clang
 
 script:
