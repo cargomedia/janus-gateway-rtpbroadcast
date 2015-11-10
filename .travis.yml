@@ -19,7 +19,6 @@ before_install:
   - sudo make uninstall
   - sudo make install
   - cd ..
-  - git clone https://github.com/meetecho/janus-gateway.git
   - cd janus-gateway
   - ./autogen.sh
   - ./configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --disable-websockets --disable-data-channels
