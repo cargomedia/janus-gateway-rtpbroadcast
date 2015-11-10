@@ -9,7 +9,7 @@ before_install:
   - sudo apt-get update -qq
   - sudo apt-get install -y libmicrohttpd-dev libjansson-dev libnice-dev libssl-dev libsrtp-dev
   - sudo apt-get install -y libglib2.0-dev libogg-dev libini-config-dev libsofia-sip-ua-dev
-  - sudo apt-get install -y libcollection-dev libavutil-dev libavcodec-dev libavformat-dev
+  - sudo apt-get install -y libcollection-dev libavutil-dev libavcodec-dev libavformat-dev gengetopt
   - sudo apt-get install -y libtool autoconf automake make bison flex gcc cmake glib-2.0 clang
   - wget https://github.com/cisco/libsrtp/archive/v1.5.0.tar.gz
   - tar xfv v1.5.0.tar.gz
@@ -21,7 +21,10 @@ before_install:
   - cd ..
   - cd janus-gateway
   - ./autogen.sh
-  - ./configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --disable-websockets --disable-data-channels
+  - ./configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --disable-websockets \
+    --disable-data-channels --disable-plugin-audiobridge --disable-plugin-echotest \
+    --disable-plugin-recordplay --disable-plugin-sip --disable-plugin-streaming \
+    --disable-plugin-videocall --disable-plugin-videoroom --disable-plugin-voicemail
   - make
   - sudo make install
   - cd ..
