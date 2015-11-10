@@ -913,7 +913,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 		json_t *recorded = json_object_get(root, "recorded");
-		if(recorded && !json_is_string(recorded)) {
+		if(recorded && !json_is_boolean(recorded)) {
 			JANUS_LOG(LOG_ERR, "Invalid element (recorded should be a boolean)\n");
 			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Invalid element (recorded should be a boolean)");
