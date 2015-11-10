@@ -1,5 +1,5 @@
 # janus-gateway-cm
-janus-gateway plugin(s) for https://github.com/cargomedia/cm-janus
+[janus-gateway](https://github.com/meetecho/janus-gateway) plugin for [cm-janus](https://github.com/cargomedia/cm-janus)
 
 ## Building
 [![Build Status](https://travis-ci.org/cargomedia/janus-gateway-rtpbroadcast.svg)](https://travis-ci.org/cargomedia/janus-gateway-rtpbroadcast)
