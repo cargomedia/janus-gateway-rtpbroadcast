@@ -2336,8 +2336,8 @@ static void cm_rtpbcast_generic_start_recording(
 				types[j]
 			};
 
-			_foreach (j, tags)
-				fname = str_replace(fname, tags[j], values[j]);
+			_foreach (k, tags)
+				fname = str_replace(fname, tags[k], values[k]);
 
 			recorders[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], fname);
 			g_free(fname);
