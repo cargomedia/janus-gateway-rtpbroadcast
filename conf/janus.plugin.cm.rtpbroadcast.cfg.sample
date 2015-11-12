@@ -3,6 +3,8 @@
 ; minport = 8000
 ; maxport = 9000
 
+; NOTE: all paths should exist beforehead
+
 ; Path for job JSONs
 ; job_path = "/tmp/jobs"
 
