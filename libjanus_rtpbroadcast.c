@@ -2259,7 +2259,7 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 	g_snprintf(r_str, 512, "%u", r);
 
 	char buf[512];
-	g_snprintf(buf, 512, "%lu%llu%s", r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
+	g_snprintf(buf, 512, "%lu%llu%s", (long unsigned)r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
 	gchar *md5 = g_compute_checksum_for_string(G_CHECKSUM_MD5, buf, -1);
 
 	/* Constructing the filename */
