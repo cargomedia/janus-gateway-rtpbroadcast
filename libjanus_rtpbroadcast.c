@@ -2277,7 +2277,6 @@ static void cm_rtpbcast_generic_start_recording(
 		const char *fname_pattern,			/* Printf pattern for filename */
 		const char *id,									/* streamChannelKey */
 		const char *types[],						/* Type labels, per recorder */
-		const char *event_name,				  /* JSON event name for notification */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
 	) {
 		/* FIXME @landswellsong which mutex we must lock? */
@@ -2313,8 +2312,6 @@ static void cm_rtpbcast_generic_start_recording(
 		res = FALSE;
 		for (j = start; j <= end; j++)
 			res |= (recorders[j] != NULL);
-		if (res)
-			cm_rtpbcast_store_event(response, event_name);
 
 		json_decref(response);
 }
@@ -2367,7 +2364,6 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 		cm_rtpbcast_settings.recording_pattern,
 		mnt->id,
 		av_names,
-		"archive-started",
 		is_video
 	);
 }
@@ -2391,7 +2387,6 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		cm_rtpbcast_settings.thumbnailing_pattern,
 		mnt->id,
 		types,
-		"thumbnailing-started",
 		is_video
 	);
 }
