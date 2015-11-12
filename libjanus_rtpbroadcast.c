@@ -2277,7 +2277,7 @@ static void cm_rtpbcast_generic_start_recording(
 		const char *fname_pattern,			/* Printf pattern for filename */
 		const char *id,									/* streamChannelKey */
 		const char *types[],						/* Type labels, per recorder */
-		const char *event_name,				  /* JSON event name for supersession notification */
+		const char *event_name,				  /* JSON event name for notification */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
 	) {
 		/* FIXME @landswellsong which mutex we must lock? */
@@ -2288,7 +2288,7 @@ static void cm_rtpbcast_generic_start_recording(
 		if (res)
 			return;
 
-		/* Event for superssessions */
+		/* Event for notification */
 		json_t *response = json_object();
 		json_object_set_new(response, "id", json_string(id));
 
@@ -2309,7 +2309,7 @@ static void cm_rtpbcast_generic_start_recording(
 			}
 		}
 
-		/* Note that we are recording and notify superssessions */
+		/* Note that we are recording and notify  */
 		res = FALSE;
 		for (j = start; j <= end; j++)
 			res |= (recorders[j] != NULL);
@@ -2324,7 +2324,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	size_t start, size_t end, 			/* Inclusive, which ones to process */
 	const char *id,									/* streamChannelKey */
 	const char *types[],						/* Type labels, per recorder */
-	const char *event_name				  /* JSON event name for supersession notification */
+	const char *event_name				  /* JSON event name for notification */
 	) {
 	size_t j; gboolean res = TRUE;
 	for (j = start; j <= end; j++)
@@ -2332,7 +2332,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	if (res)
 		return;
 
-	/* Event for superssessions */
+	/* Event for notification */
 	json_t *response = json_object();
 	json_object_set_new(response, "id", json_string(id));
 
