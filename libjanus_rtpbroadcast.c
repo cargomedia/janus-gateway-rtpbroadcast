@@ -485,10 +485,10 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
-	cm_rtpbcast_settings.job_pattern = g_strdup("job-${md5}");
+	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
-	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-${id}-${time}-${type}");
-	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-${id}-${time}-${type}");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 
@@ -2266,10 +2266,10 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 	char *fname = g_strdup(cm_rtpbcast_settings.job_pattern);
 
 	const char *tags[] = {
-		"${time}",
-		"${rand}",
-		"${md5}",
-		"${plugin}"
+		"#{time}",
+		"#{rand}",
+		"#{md5}",
+		"#{plugin}"
 	};
 
 	const char *values[] = {
@@ -2325,9 +2325,9 @@ static void cm_rtpbcast_generic_start_recording(
 			g_snprintf(ml_str, 512, "%llu", (long long unsigned)ml);
 
 			const char *tags[] = {
-				"${time}",
-				"${id}",
-				"${type}"
+				"#{time}",
+				"#{id}",
+				"#{type}"
 			};
 
 			const char *values[] = {
