@@ -3,6 +3,19 @@
 ; minport = 8000
 ; maxport = 9000
 
+; NOTE: all paths should exist beforehead
+
+; Path for job JSONs
+; job_path = "/tmp/jobs"
+
+; prinf pattern for job filenames (.json is auto)
+; Short usage, the following gets substituted:
+; %1$llu  is timestamp (guint64)
+; %2$lu   is random integer (guin32)
+; %3$s    is md5 of (timestamp + plugin name + random integer)
+; %4$s    is plugin name ("janus.plugin.cm.rtpbroadcast")
+; job_pattern = "job-%3$s"
+
 ; Path for recording and thumbnailing
 ; archive_path = "/tmp/recordings"
 

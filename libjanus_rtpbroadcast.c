@@ -216,6 +216,8 @@ const char *av_names[] = { "audio", "video" };
 
 static struct {
 	guint minport, maxport;
+	const char *job_path;
+	const char *job_pattern;
 	const char *archive_path;
 	const char *recording_pattern;
 	const char *thumbnailing_pattern;
@@ -369,7 +371,7 @@ typedef struct cm_rtpbcast_session {
 static GHashTable *sessions;
 static GList *old_sessions;
 static janus_mutex sessions_mutex;
-static void cm_rtpbcast_store_event(json_t* );
+static void cm_rtpbcast_store_event(json_t* , const char *);
 
 /* Packets we get from gstreamer and relay */
 typedef struct cm_rtpbcast_rtp_relay_packet {
@@ -481,6 +483,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Defauts */
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
+	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
+	cm_rtpbcast_settings.job_pattern = g_strdup("job-%3$s");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%1$s-%2$llu-%3$s");
 	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%1$s-%2$llu-%3$s");
@@ -520,11 +524,15 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		/* Strings */
 		{
 			const char *inames [] = {
+			 "job_path",
+			 "job_pattern",
 			 "archive_path",
 			 "recording_pattern",
 			 "thumbnailing_pattern"
 		  };
 			const char **ivars [] = {
+				&cm_rtpbcast_settings.job_path,
+				&cm_rtpbcast_settings.job_pattern,
 				&cm_rtpbcast_settings.archive_path,
 				&cm_rtpbcast_settings.recording_pattern,
 				&cm_rtpbcast_settings.thumbnailing_pattern
@@ -621,6 +629,8 @@ void cm_rtpbcast_destroy(void) {
 	sessions = NULL;
 
 	/* Freeing configuration strings */
+	g_free((gpointer)cm_rtpbcast_settings.job_path);
+	g_free((gpointer)cm_rtpbcast_settings.job_pattern);
 	g_free((gpointer)cm_rtpbcast_settings.archive_path);
 	g_free((gpointer)cm_rtpbcast_settings.recording_pattern);
 	g_free((gpointer)cm_rtpbcast_settings.thumbnailing_pattern);
@@ -2227,74 +2237,38 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	return src;
 }
 
-typedef struct cm_rtpbcast_evtdata {
-  char transaction_id[13];
-	json_t *evt;
-} cm_rtpbcast_evtdata;
-
-static char randomAZ09() {
-	/* [0-9A-Za-z]* basically picking characters from three intervals */
-	char intv[][2] = {
-		{'0','9'},
-	  {'A','Z'},
-		{'a','z'}
-	};
-	static size_t total = 0;
-
-	/* First run, calculate how much symbols we get to pick from */
-	if (total == 0) {
-		_foreach(i, intv)
-			total += intv[i][1]-intv[i][0];
-	}
-
-	/* Picking a random number */
-	size_t n = g_random_int() % total;
-
-	/* Searching which interval it belongs to */
-	_foreach(j, intv)
-		if (n < intv[j][1]-intv[j][0])
-			return intv[j][0]+n;
-		else
-			n-=intv[j][1]-intv[j][0];
-
-	return '?'; /* Ideally will never happen */
-}
-
-void cm_rtpbcast_store_event(json_t* response) {
+void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 	if (!response)
 		return;
 
-	/* Adding timestamp and transaction id */
-	cm_rtpbcast_evtdata evtdata;
-	evtdata.transaction_id[12] = 0;
-	size_t i;
-	for (i = 0; i < 12; i++)
-		evtdata.transaction_id[i] = randomAZ09();
+	/* Creating outer layer JSON */
+	json_t *envelope = json_object();
 
-	evtdata.evt = json_deep_copy(response);
-	guint64 tm = janus_get_monotonic_time();
-	json_object_set_new(evtdata.evt, "timestamp", json_integer(tm));
-	json_object_set_new(evtdata.evt, "superuser", json_true());
+	json_object_set_new(envelope, "plugin", json_string(CM_RTPBCAST_PACKAGE));
+	json_object_set_new(envelope, "event", json_string(event_name));
+	json_object_set(envelope, "data", response);
 
-	/* Iterating over the serssions */
-	//g_list_foreach(super_sessions, cm_rtpbcast_notify_session, &evtdata);
+	/* Generating an MD5 for filename */
+	guint64 ml = janus_get_monotonic_time();
+	guint32 r = g_random_int();
+	char buf[512];
+	g_snprintf(buf, 512, "%lu%llu%s", r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
+	gchar *md5 = g_compute_checksum_for_string(G_CHECKSUM_MD5, buf, -1);
 
-	json_decref(evtdata.evt);
+	/* Constructing the filename */
+	char fname[512];
+	g_snprintf(fname, 512, "job-%s",//cm_rtpbcast_settings.job_pattern,
+/*ml, r,*/ md5/*, CM_RTPBCAST_PACKAGE*/);
+	g_free(md5);
+
+	char fullpath[512];
+	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path, fname);
+
+	if (!json_dump_file(envelope, fullpath, JSON_INDENT(4)))
+		JANUS_LOG(LOG_ERR, "Error saving JSON to %s", fullpath);
+
+	json_decref(envelope);
 }
-
-// void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
-// 	cm_rtpbcast_session *session = data;
-// 	cm_rtpbcast_evtdata *event = user_data;
-//
-// 	if (!session || !event)
-// 		return;
-//
-// 	char *event_text = json_dumps(event->evt, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
-// 	JANUS_LOG(LOG_VERB, "Pushing event: %s\n", event_text);
-// 	int ret = gateway->push_event(session->handle, &cm_rtpbcast_plugin, event->transaction_id, event_text, NULL, NULL);
-// 	JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
-// 	g_free(event_text);
-// }
 
 /* Generic functions for both recording and thumbnailing */
 static void cm_rtpbcast_generic_start_recording(
@@ -2303,7 +2277,6 @@ static void cm_rtpbcast_generic_start_recording(
 		const char *fname_pattern,			/* Printf pattern for filename */
 		const char *id,									/* streamChannelKey */
 		const char *types[],						/* Type labels, per recorder */
-		const char *event_name,				  /* JSON event name for supersession notification */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
 	) {
 		/* FIXME @landswellsong which mutex we must lock? */
@@ -2314,9 +2287,8 @@ static void cm_rtpbcast_generic_start_recording(
 		if (res)
 			return;
 
-		/* Event for superssessions */
+		/* Event for notification */
 		json_t *response = json_object();
-		json_object_set_new(response, "streaming", json_string(event_name));
 		json_object_set_new(response, "id", json_string(id));
 
 		/* Assuming streams contain both video and audio */
@@ -2336,12 +2308,10 @@ static void cm_rtpbcast_generic_start_recording(
 			}
 		}
 
-		/* Note that we are recording and notify superssessions */
+		/* Note that we are recording and notify  */
 		res = FALSE;
 		for (j = start; j <= end; j++)
 			res |= (recorders[j] != NULL);
-		if (res)
-			cm_rtpbcast_notify_supers(response);
 
 		json_decref(response);
 }
@@ -2351,7 +2321,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	size_t start, size_t end, 			/* Inclusive, which ones to process */
 	const char *id,									/* streamChannelKey */
 	const char *types[],						/* Type labels, per recorder */
-	const char *event_name				  /* JSON event name for supersession notification */
+	const char *event_name				  /* JSON event name for notification */
 	) {
 	size_t j; gboolean res = TRUE;
 	for (j = start; j <= end; j++)
@@ -2359,9 +2329,8 @@ static void cm_rtpbcast_generic_stop_recording(
 	if (res)
 		return;
 
-	/* Event for superssessions */
+	/* Event for notification */
 	json_t *response = json_object();
-	json_object_set_new(response, "streaming", json_string(event_name));
 	json_object_set_new(response, "id", json_string(id));
 
 	for (j = start; j <= end; j++) {
@@ -2382,7 +2351,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	for (j = start; j <= end; j++)
 		res &= (!recorders[j]);
 	if (res)
-		cm_rtpbcast_notify_supers(response);
+		cm_rtpbcast_store_event(response, event_name);
 
 	json_decref(response);
 }
@@ -2395,7 +2364,6 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 		cm_rtpbcast_settings.recording_pattern,
 		mnt->id,
 		av_names,
-		"archive-started",
 		is_video
 	);
 }
@@ -2419,7 +2387,6 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		cm_rtpbcast_settings.thumbnailing_pattern,
 		mnt->id,
 		types,
-		"thumbnailing-started",
 		is_video
 	);
 }
