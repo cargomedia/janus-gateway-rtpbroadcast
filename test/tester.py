@@ -24,7 +24,7 @@ def janus_cmd(cmd, cond = False, action = lambda x: x ):
             print("error in communication!")
         else:
             j = r.json()
-            print(j)
+            print(json.dumps(j,indent=4, separators=(',', ': ')))
             action(j)
 
 def greet():

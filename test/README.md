@@ -39,3 +39,19 @@ Create a mountpoint `id`, default is `Ababagalamaga`.
 # `destroy(id)`
 
 Destroy the mountpoint by `id`, default is `Ababagalamaga`.
+
+# `stream(amin,amax,vmin,vmax)`
+
+Create streaming streams, params means maximal and minimal bitrate and can be omitted with
+default values.
+
+# `unstream()`
+
+Stops streaming. *Don't forget* to do this when you stop session. It's *not* done automatically. Manual kill:
+```
+killall gst-launch-1.0
+```
+
+# `session()`
+
+Runs `greet()`, `attach()` and `create()`
