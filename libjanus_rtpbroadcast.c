@@ -193,6 +193,7 @@ static GThread *watchdog;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
+static char *str_replace(char *instr, const char *needle, const char *replace);
 
 /* Helper to remove insane code duplication everywhere
  	 Sample illustrating use:
@@ -484,10 +485,10 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
-	cm_rtpbcast_settings.job_pattern = g_strdup("job-%3$s");
+	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
-	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-%1$s-%2$llu-%3$s");
-	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-%1$s-%2$llu-%3$s");
+	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
+	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 
@@ -2250,22 +2251,45 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 
 	/* Generating an MD5 for filename */
 	guint64 ml = janus_get_monotonic_time();
+	char ml_str [512];
+	g_snprintf(ml_str, 512, "%llu", (long long unsigned)ml);
+
 	guint32 r = g_random_int();
+	char r_str [512];
+	g_snprintf(r_str, 512, "%u", r);
+
 	char buf[512];
-	g_snprintf(buf, 512, "%lu%llu%s", r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
+	g_snprintf(buf, 512, "%lu%llu%s", (long unsigned)r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
 	gchar *md5 = g_compute_checksum_for_string(G_CHECKSUM_MD5, buf, -1);
 
 	/* Constructing the filename */
-	char fname[512];
-	g_snprintf(fname, 512, "job-%s",//cm_rtpbcast_settings.job_pattern,
-/*ml, r,*/ md5/*, CM_RTPBCAST_PACKAGE*/);
+	char *fname = g_strdup(cm_rtpbcast_settings.job_pattern);
+
+	const char *tags[] = {
+		"#{time}",
+		"#{rand}",
+		"#{md5}",
+		"#{plugin}"
+	};
+
+	const char *values[] = {
+		ml_str,
+		r_str,
+		md5,
+		CM_RTPBCAST_PACKAGE
+	};
+
+	_foreach (j, tags)
+		fname = str_replace(fname, tags[j], values[j]);
+
 	g_free(md5);
 
 	char fullpath[512];
 	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path, fname);
+	g_free(fname);
 
-	if (!json_dump_file(envelope, fullpath, JSON_INDENT(4)))
-		JANUS_LOG(LOG_ERR, "Error saving JSON to %s", fullpath);
+	if (json_dump_file(envelope, fullpath, JSON_INDENT(4)))
+		JANUS_LOG(LOG_ERR, "Error saving JSON to %s\n", fullpath);
 
 	json_decref(envelope);
 }
@@ -2294,9 +2318,30 @@ static void cm_rtpbcast_generic_start_recording(
 		/* Assuming streams contain both video and audio */
 		guint64 mt = janus_get_monotonic_time();
 		for (j = start; j <= end; j++) {
-			char buf[512];
-			g_snprintf(buf, 512, fname_pattern, id, mt, types[j]);
-			recorders[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], (char *)buf);
+			char *fname = g_strdup(fname_pattern);
+
+			guint64 ml = janus_get_monotonic_time();
+			char ml_str [512];
+			g_snprintf(ml_str, 512, "%llu", (long long unsigned)ml);
+
+			const char *tags[] = {
+				"#{time}",
+				"#{id}",
+				"#{type}"
+			};
+
+			const char *values[] = {
+				ml_str,
+				id,
+				types[j]
+			};
+
+			_foreach (k, tags)
+				fname = str_replace(fname, tags[k], values[k]);
+
+			recorders[j] = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], fname);
+			g_free(fname);
+
 			if(recorders[j] == NULL) {
 				JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", types[j]);
 			} else {
@@ -2400,4 +2445,12 @@ void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		types,
 		"thumbnailing-finished"
 	);
+}
+
+char *str_replace(char *instr, const char *needle, const char *replace) {
+	GRegex* regex = g_regex_new(needle, 0, 0, NULL);
+	char* new = g_regex_replace_literal(regex, instr, -1, 0, replace, 0, NULL);
+	g_regex_unref (regex);
+	g_free(instr);
+	return new;
 }
