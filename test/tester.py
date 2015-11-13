@@ -1,13 +1,14 @@
 #!/usr/bin/python3 -i
 # -*- coding: utf-8 -*-
 
-import requests, json
+import requests, json, subprocess
 
 janus_url = "http://localhost:8088/janus"
 mountpoint_id = "Ababagalamaga"
 session_id = None
 handle_id = None
 ports = None
+streamer = None
 
 # Older requsests lack normal JSON POST
 def mypost(url, json_v):
@@ -103,3 +104,47 @@ def destroy():
                     "request": "destroy",
                     "id": mountpoint_id
                 } }, not session_id or not handle_id)
+
+# Streaming bitrates
+videorate_min = 20000
+videorate_max = 156000
+audiorate_min = 6000
+audiorate_max = 20000
+
+def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
+    global streamer
+    args = "gst-launch-1.0 "
+    nstreams = int(len(ports)/2)
+    if streamer:
+        print("Streamer already active!")
+    else:
+        for i in range(0,nstreams):
+            arate = int(amin+i*(amax-amin)/(nstreams-1))
+            vrate = int(vmin+i*(vmax-vmin)/(nstreams-1))
+            args+="  audiotestsrc !  "
+            args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
+            args+="    opusenc bitrate=" + str(arate) + " ! "
+            args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(ports[i*2]) + "  "
+            args+="  videotestsrc ! "
+            args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
+            args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
+            args+="    vp8enc error-resilient=true target-bitrate=" + str(vrate) + " ! "
+            args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
+        # args += ">/dev/null 2>&1"
+        print("Running: " + args)
+        streamer = subprocess.Popen(args, shell=True)
+
+def unstream():
+    global streamer
+    if not streamer:
+        print("Streamer not active!")
+    else:
+        streamer.terminate()
+        print("Streamer stopped")
+        streamer = None
+
+def session():
+    greet()
+    attach()
+    destroy()
+    create()
