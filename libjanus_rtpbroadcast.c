@@ -308,7 +308,7 @@ static void cm_rtpbcast_port_manager_free(guint);
 static void cm_rtpbcast_port_manager_destroy();
 
 static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp);
-static void cm_rtpbcast_mountpoint_destroy(cm_rtpbcast_mountpoint *mp);
+static void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data);
 
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 typedef struct cm_rtpbcast_rtp_source_request {
@@ -721,6 +721,12 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+
+	/* If this is a streamer session, kill the stream */
+	if(session->mps)
+		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
+	session->mps = NULL;
+
 	janus_mutex_lock(&sessions_mutex);
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
@@ -1109,7 +1115,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			janus_mutex_unlock(&src->mutex);
 		}
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
-		cm_rtpbcast_mountpoint_destroy(mp);
+		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
@@ -2454,7 +2460,8 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 	return new;
 }
 
-void cm_rtpbcast_mountpoint_destroy(cm_rtpbcast_mountpoint *mp) {
+void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
+	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
 	if(!mp->destroyed) {
 		/* If it's recording, stop it */
 		if(mp->rc[AUDIO] || mp->rc[VIDEO])
@@ -2470,7 +2477,7 @@ void cm_rtpbcast_mountpoint_destroy(cm_rtpbcast_mountpoint *mp) {
 		}
 
 		mp->destroyed = janus_get_monotonic_time();
-		g_hash_table_remove(mountpoints, id_value);
+		g_hash_table_remove(mountpoints, mp->id);
 		/* Cleaning up and removing the mountpoint is done in a lazy way */
 		old_mountpoints = g_list_append(old_mountpoints, mp);
 	}
