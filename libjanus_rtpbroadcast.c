@@ -251,6 +251,8 @@ typedef struct cm_rtpbcast_stats {
 static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *);
 static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, int);
 
+/* Forward declaration for pointer */
+typedef struct cm_rtpbcast_session cm_rtpbcast_session;
 typedef struct cm_rtpbcast_mountpoint {
 	char *id;
 	char *name;
@@ -267,6 +269,8 @@ typedef struct cm_rtpbcast_mountpoint {
 
 	GArray *sources; // of type cm_rtpbcast_rtp_source*
 	gint64 destroyed;
+
+	cm_rtpbcast_session *session;
 } cm_rtpbcast_mountpoint;
 GHashTable *mountpoints;
 static GList *old_mountpoints;
@@ -308,6 +312,7 @@ static void cm_rtpbcast_port_manager_free(guint);
 static void cm_rtpbcast_port_manager_destroy();
 
 static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp);
+static void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data);
 
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 typedef struct cm_rtpbcast_rtp_source_request {
@@ -369,6 +374,7 @@ typedef struct cm_rtpbcast_session {
 	gboolean started;
 	gboolean paused;
 	cm_rtpbcast_context context;
+	GList/*cm_rtpbcast_mountpoint*/ *mps;
 	gboolean stopping;
 	volatile gint hangingup;
 	gint64 destroyed;	/* Time at which this session was marked as destroyed */
@@ -691,6 +697,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = 0;
+	session->mps = NULL;
 
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
@@ -718,6 +725,12 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+
+	/* If this is a streamer session, kill the stream */
+	if(session->mps)
+		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
+	session->mps = NULL;
+
 	janus_mutex_lock(&sessions_mutex);
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
@@ -1032,6 +1045,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
+		/* Associate mp with session */
+		session->mps = g_list_prepend(session->mps, mp);
+		mp->session = session;
+
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("created"));
@@ -1110,19 +1127,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			janus_mutex_unlock(&src->mutex);
 		}
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
-		if(!mp->destroyed) {
-			/* If it's recording, stop it */
-			if(mp->rc[AUDIO] || mp->rc[VIDEO])
-				cm_rtpbcast_stop_recording(mp);
-
-			if(mp->trc[0])
-				cm_rtpbcast_stop_thumbnailing(mp);
-
-			mp->destroyed = janus_get_monotonic_time();
-			g_hash_table_remove(mountpoints, id_value);
-			/* Cleaning up and removing the mountpoint is done in a lazy way */
-			old_mountpoints = g_list_append(old_mountpoints, mp);
-		}
+		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
@@ -2488,4 +2493,27 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 	g_regex_unref (regex);
 	g_free(instr);
 	return new;
+}
+
+void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
+	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
+	if(!mp->destroyed) {
+		/* If it's recording, stop it */
+		if(mp->rc[AUDIO] || mp->rc[VIDEO])
+			cm_rtpbcast_stop_recording(mp);
+
+		if(mp->trc[0])
+			cm_rtpbcast_stop_thumbnailing(mp);
+
+		/* Remove from respective session */
+		if(mp->session) {
+			mp->session->mps = g_list_remove_all(mp->session->mps, mp);
+			mp->session = NULL;
+		}
+
+		mp->destroyed = janus_get_monotonic_time();
+		g_hash_table_remove(mountpoints, mp->id);
+		/* Cleaning up and removing the mountpoint is done in a lazy way */
+		old_mountpoints = g_list_append(old_mountpoints, mp);
+	}
 }
