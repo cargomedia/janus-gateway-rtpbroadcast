@@ -6,7 +6,7 @@
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs
-; job_path = "/tmp/jobs"
+; job_path = /tmp/jobs
 
 ; prinf pattern for job filenames (.json is auto)
 ; Short usage, the following gets substituted:
@@ -14,20 +14,20 @@
 ; #{rand}     is random integer (guin32)
 ; #{md5}      is md5 of (timestamp + plugin name + random integer)
 ; #{plugin}   is plugin name ("janus.plugin.cm.rtpbroadcast")
-; job_pattern = "job-#{md5}"
+; job_pattern = job-#{md5}
 
 ; Path for recording and thumbnailing
-; archive_path = "/tmp/recordings"
+; archive_path = /tmp/recordings"
 
 ; printf pattern for recordings filenames
 ; Short usage, the following gets substituted:
 ; #{id}       is streamChannelKey (string)
 ; #{time}     is timestamp (guint64)
 ; #{type}     is type ("audio", "video" or "thumb" string)
-; recording_pattern = "rec-#{id}-#{time}-#{type}"
+; recording_pattern = rec-#{id}-#{time}-#{type}
 
 ; Same for thumbnails
-; thumbnailing_pattern = "thum-#{id}-#{time}-#{type}"
+; thumbnailing_pattern = thum-#{id}-#{time}-#{type}
 
 ; Thumbnailing interval in seconds
 ; thumbnailing_interval = 60
