@@ -1093,40 +1093,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 		JANUS_LOG(LOG_VERB, "Request to unmount mountpoint/stream %s\n", id_value);
-		/* FIXME Should we kick the current viewers as well? */
-		guint i;
-		for (i = 0; i < mp->sources->len; i++) {
-			cm_rtpbcast_rtp_source *src = g_array_index(mp->sources,
-			 	cm_rtpbcast_rtp_source *, i);
-
-			janus_mutex_lock(&src->mutex);
-			GList *viewer = g_list_first(src->listeners);
-			/* Prepare JSON event */
-			json_t *event = json_object();
-			json_object_set_new(event, "streaming", json_string("event"));
-			json_t *result = json_object();
-			json_object_set_new(result, "status", json_string("stopped"));
-			json_object_set_new(event, "result", result);
-			char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
-			json_decref(event);
-			while(viewer) {
-				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
-				if(session != NULL) {
-					session->stopping = TRUE;
-					session->started = FALSE;
-					session->paused = FALSE;
-					session->source = NULL;
-					/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
-					gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
-					gateway->close_pc(session->handle);
-				}
-				src->listeners = g_list_remove_all(src->listeners, session);
-				viewer = g_list_first(src->listeners);
-			}
-			g_free(event_text);
-			janus_mutex_unlock(&src->mutex);
-		}
-		/* Remove mountpoint from the hashtable: this will get it destroyed */
 		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
@@ -2498,6 +2464,40 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
 	if(!mp->destroyed) {
+		/* FIXME Should we kick the current viewers as well? */
+		guint i;
+		for (i = 0; i < mp->sources->len; i++) {
+			cm_rtpbcast_rtp_source *src = g_array_index(mp->sources,
+				cm_rtpbcast_rtp_source *, i);
+
+			janus_mutex_lock(&src->mutex);
+			GList *viewer = g_list_first(src->listeners);
+			/* Prepare JSON event */
+			json_t *event = json_object();
+			json_object_set_new(event, "streaming", json_string("event"));
+			json_t *result = json_object();
+			json_object_set_new(result, "status", json_string("stopped"));
+			json_object_set_new(event, "result", result);
+			char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+			json_decref(event);
+			while(viewer) {
+				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
+				if(session != NULL) {
+					session->stopping = TRUE;
+					session->started = FALSE;
+					session->paused = FALSE;
+					session->source = NULL;
+					/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
+					gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+					gateway->close_pc(session->handle);
+				}
+				src->listeners = g_list_remove_all(src->listeners, session);
+				viewer = g_list_first(src->listeners);
+			}
+			g_free(event_text);
+			janus_mutex_unlock(&src->mutex);
+		}
+
 		/* If it's recording, stop it */
 		if(mp->rc[AUDIO] || mp->rc[VIDEO])
 			cm_rtpbcast_stop_recording(mp);
@@ -2511,6 +2511,7 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 			mp->session = NULL;
 		}
 
+		/* Remove mountpoint from the hashtable: this will get it destroyed */
 		mp->destroyed = janus_get_monotonic_time();
 		g_hash_table_remove(mountpoints, mp->id);
 		/* Cleaning up and removing the mountpoint is done in a lazy way */
