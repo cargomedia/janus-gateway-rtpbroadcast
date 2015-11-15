@@ -111,8 +111,10 @@ url = RTSP stream URL (only if type=rtsp)
 
 #include <jansson.h>
 #include <errno.h>
+/* TODO @landswellsong those are not really portable, are they? */
 #include <sys/poll.h>
 #include <sys/time.h>
+#include <netdb.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
@@ -260,6 +262,8 @@ typedef struct cm_rtpbcast_mountpoint {
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
 	janus_recorder *trc[1];	/* Thumbnailing recorder, array for generic code sake */
 	guint64 last_thumbnail; /* Positon (frames/time) of last thumbnail taken */
+	gboolean whitelisted;
+	struct in_addr allowed_ip;
 
 	GArray *sources; // of type cm_rtpbcast_rtp_source*
 	gint64 destroyed;
@@ -320,7 +324,7 @@ typedef struct cm_rtpbcast_rtp_relay_thread_data {
 
 cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		char* id, char *name, char *desc, gboolean recorded,
-		GArray *requests);
+		const char *allowed_ip, GArray *requests);
 
 typedef struct cm_rtpbcast_message {
 	janus_plugin_session *handle;
@@ -896,6 +900,13 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			g_snprintf(error_cause, 512, "Invalid element (recorded should be a boolean)");
 			goto error;
 		}
+		json_t *whitelist = json_object_get(root, "whitelist");
+		if(whitelist && !json_is_string(whitelist)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (whitelist should be a string)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (whitelist should be a string)");
+			goto error;
+		}
 
 		/* Streams is an array now, containing pairs of audio+video streams */
 		json_t *streams = json_object_get(root, "streams");
@@ -1012,6 +1023,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				name ? (char *)json_string_value(name) : NULL,
 				desc ? (char *)json_string_value(desc) : NULL,
 				(!recorded) || json_is_true(recorded), 	/* Recorded by default */
+				whitelist ? json_string_value(whitelist) : NULL,
 				sources);
 		if(mp == NULL) {
 			JANUS_LOG(LOG_ERR, "Error creating 'rtp' stream...\n");
@@ -1823,7 +1835,7 @@ static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp) {
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		char *id, char *name, char *desc, gboolean recorded,
-		GArray *requests) {
+		const char* allowed_ip, GArray *requests) {
 	if(name == NULL) {
 		JANUS_LOG(LOG_VERB, "Missing name, will generate a random one...\n");
 	}
@@ -1847,6 +1859,17 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 	live_rtp->rc[AUDIO] = NULL;
 	live_rtp->rc[VIDEO] = NULL;
 	live_rtp->trc[0] = NULL;
+
+	/* Setting allowed IP's */
+	live_rtp->whitelisted = FALSE;
+	if (allowed_ip) {
+		struct hostent *he = gethostbyname2(allowed_ip, AF_INET);
+		if (he) {
+			memcpy(&live_rtp->allowed_ip.s_addr, he->h_addr, sizeof(he->h_length));
+			live_rtp->whitelisted = TRUE;
+		}
+	}
+
 
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_rtp_source*), requests->len);
@@ -1999,6 +2022,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				}
 				addrlen = sizeof(remote);
 				bytes = recvfrom(source->fd[j], buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
+				/* Note we only update stats for legitimate packets */
+				if(source->mp && source->mp->whitelisted &&
+					memcmp(&remote.sin_addr.s_addr, &source->mp->allowed_ip.s_addr, sizeof(in_addr_t)) != 0) {
+					char buf1[512], buf2[512]; /* inet_ntoa operates on static buffers so we can't call two in same LOG() */
+					strncpy(buf1, inet_ntoa(remote.sin_addr), 512);
+					strncpy(buf2, inet_ntoa(source->mp->allowed_ip), 512);
+					JANUS_LOG(LOG_WARN, "[%s] Got packet from %s whereas only %s is whitelisted\n",
+						source->mp->id, buf1, buf2);
+					continue;
+				}
+
+				/* Note we only update stats for legitimate packets */
 				/* FIXME @landswellsong are we only expecting IPv4 ? */
 				cm_rtpbcast_stats_update(&source->stats, bytes + sizeof(struct ip) + sizeof(struct udphdr));
 				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
