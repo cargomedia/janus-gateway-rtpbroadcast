@@ -2236,8 +2236,8 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 		};
 	guint64 delays[] = {
 			STAT_UPDATE_DELAY,
-			cm_rtpbcast_settings.upgrade_avg_time,
-			cm_rtpbcast_settings.downgrade_avg_time
+			cm_rtpbcast_settings.upgrade_avg_time * STAT_UPDATE_DELAY,
+			cm_rtpbcast_settings.downgrade_avg_time * STAT_UPDATE_DELAY
 		};
 	guint64 *usec_vars[] = {
 			&st->last_avg_usec,
