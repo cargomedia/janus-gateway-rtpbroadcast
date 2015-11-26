@@ -3,6 +3,12 @@
 ; minport = 8000
 ; maxport = 9000
 
+; Source bitrate averaging time for downgrading, seconds
+; downgrade_avg_time = 2
+
+; Source bitrate averaging time for upgrading, seconds
+; upgrade_avg_time = 10
+
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs

@@ -226,6 +226,8 @@ static struct {
 	const char *thumbnailing_pattern;
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
+	guint downgrade_avg_time;
+	guint upgrade_avg_time;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -240,11 +242,17 @@ typedef struct cm_rtpbcast_stats {
 	gdouble max;
 	gdouble cur;
 	gdouble avg;
+	gdouble cur_up;
+	gdouble cur_down;
 
 	guint64 start_usec;
 	guint64 last_avg_usec;
+	guint64 last_avg_up_usec;
+	guint64 last_avg_down_usec;
 	guint64 bytes_since_start;
 	guint64 bytes_since_last_avg;
+	guint64 bytes_since_last_avg_up;
+	guint64 bytes_since_last_avg_down;
 
 	janus_mutex stat_mutex;
 } cm_rtpbcast_stats;
@@ -494,6 +502,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Defauts */
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
+	cm_rtpbcast_settings.upgrade_avg_time = 10;
+	cm_rtpbcast_settings.downgrade_avg_time = 2;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
@@ -514,13 +524,19 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		{
 			const char *inames [] = {
 				"minport",
-				"maxport"
+				"maxport",
+				"thumbnailing_interval",
+				"thumbnailing_duration",
+				"upgrade_avg_time",
+				"downgrade_avg_time"
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
 				&cm_rtpbcast_settings.maxport,
 				&cm_rtpbcast_settings.thumbnailing_interval,
-				&cm_rtpbcast_settings.thumbnailing_duration
+				&cm_rtpbcast_settings.thumbnailing_duration,
+				&cm_rtpbcast_settings.upgrade_avg_time,
+				&cm_rtpbcast_settings.downgrade_avg_time
 			};
 
 			_foreach(i, ivars) {
@@ -858,6 +874,8 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				json_object_set_new(s, "max", json_real(src->stats.max));
 				json_object_set_new(s, "cur", json_real(src->stats.cur));
 				json_object_set_new(s, "avg", json_real(src->stats.avg));
+				json_object_set_new(s, "cur_up", json_real(src->stats.cur_up));
+				json_object_set_new(s, "cur_down", json_real(src->stats.cur_down));
 				janus_mutex_unlock(&src->stats.stat_mutex);
 
 				json_object_set_new(v, "stats", s);
@@ -2188,6 +2206,8 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	guint64 ml = janus_get_monotonic_time();
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
+	st->last_avg_up_usec = ml;
+	st->last_avg_down_usec = ml;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -2198,21 +2218,51 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 	/* This overflows at 17179869184 GB of traffic just in case :) */
 	st->bytes_since_start += bytes;
 	st->bytes_since_last_avg += bytes;
+	st->bytes_since_last_avg_up += bytes;
+	st->bytes_since_last_avg_down += bytes;
 
 	guint64 ml = janus_get_monotonic_time();
 	guint64 delay;
 
-	/* If we step over delay, calculate current and compare min/max */
-	if (ml - st->last_avg_usec >= STAT_UPDATE_DELAY) {
-		delay = ml - st->last_avg_usec;
-		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (delay != 0 ? delay : 1);
-		if (st->cur > st->max)
-			st->max = st->cur;
-		if (st->cur < st->min || st->min == 0.0L)
-			st->min = st->cur;
+	guint64 *bytes_since[] = {
+			&st->bytes_since_last_avg,
+			&st->bytes_since_last_avg_up,
+			&st->bytes_since_last_avg_down
+		};
+	gdouble *avg_vars[] = {
+			&st->cur,
+			&st->cur_up,
+			&st->cur_down
+		};
+	guint64 delays[] = {
+			STAT_UPDATE_DELAY,
+			cm_rtpbcast_settings.upgrade_avg_time,
+			cm_rtpbcast_settings.downgrade_avg_time
+		};
+	guint64 *usec_vars[] = {
+			&st->last_avg_usec,
+			&st->last_avg_up_usec,
+			&st->last_avg_down_usec
+		};
 
-		st->bytes_since_last_avg = 0;
-		st->last_avg_usec = ml;
+	/* If we step over delay, calculate current and compare min/max */
+	_foreach(i, avg_vars) {
+		if (ml - *usec_vars[i] >= delays[i]) {
+			/* Calculate */
+			delay = ml - *usec_vars[i];
+			*avg_vars[i] = (8.0L*10e5L)*(gdouble)(*bytes_since[i]) / (delay != 0 ? delay : 1);
+			/* Reset timer */
+			*bytes_since[i] = 0;
+			*usec_vars[i] = ml;
+
+			/* Only recording extrema for every second average */
+			if (i == 0) {
+				if (*avg_vars[i] > st->max)
+					st->max = *avg_vars[i];
+				if (*avg_vars[i] < st->min || st->min == 0.0L)
+					st->min = *avg_vars[i];
+			}
+		}
 	}
 
 	/* Re-calculate average regardless */
