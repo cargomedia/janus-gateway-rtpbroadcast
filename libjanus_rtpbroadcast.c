@@ -866,7 +866,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 
 			/* If id is given, skip others */
 			/* TODO: @landswellsong refactor this without a loop */
-			if (id && strcmp(json_string(id), mp->id) != 0)
+			if (id && strcmp(json_string_value(id), mp->id) != 0)
 				continue;
 
 			json_t *ml = json_object();

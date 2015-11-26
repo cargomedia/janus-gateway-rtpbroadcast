@@ -48,14 +48,13 @@ def attach(plugin = "janus.plugin.cm.rtpbroadcast"):
                 "transaction": "tester.py",
                 "session_id": session_id }, not session_id, helper)
 
-def list():
+def list(id=None):
+    body = not id and { "request": "list" } or { "request": "list", "id": id}
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
                 "session_id": session_id,
                 "handle_id": handle_id,
-                "body": {
-                    "request": "list"
-                } }, not session_id or not handle_id)
+                "body": body}, not session_id or not handle_id)
 
 def create(id=mountpoint_id):
     def helper(j):
