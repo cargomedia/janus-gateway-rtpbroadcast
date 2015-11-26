@@ -846,6 +846,14 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
 	if(!strcasecmp(request_text, "list")) {
+		json_t *id = json_object_get(root, "id");
+		if(id && !json_is_string(id) < 0) {
+			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
+			goto error;
+		}
+
 		json_t *list = json_array();
 		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
 		/* Return a list of all available mountpoints */
@@ -855,6 +863,12 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		g_hash_table_iter_init(&iter, mountpoints);
 		while (g_hash_table_iter_next(&iter, NULL, &value)) {
 			cm_rtpbcast_mountpoint *mp = value;
+
+			/* If id is given, skip others */
+			/* TODO: @landswellsong refactor this without a loop */
+			if (id && strcmp(json_string(id), mp->id) != 0)
+				continue;
+
 			json_t *ml = json_object();
 			json_object_set_new(ml, "id", json_string(mp->id));
 			json_object_set_new(ml, "name", json_string(mp->name));
