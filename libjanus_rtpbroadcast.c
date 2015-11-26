@@ -1397,24 +1397,26 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
+		sessid->remb = bw;
 
-		/* TODO @landswellsong maybe some threshold */
-		if (sessid->remb != bw) {
-			sessid->remb = bw;
+		/* If the session is watching something, let's see if it needs switching */
+		if (sessid->source) {
+			/* Switching if remb falls withing the bands of upgrade and downgrade averages */
+			if (bw < sessid->source->stats.cur_down || bw > sessid->source->stats.cur_up) {
+				cm_rtpbcast_rtp_source *src =
+					cm_rtpbcast_pick_source(sessid->source->mp->sources, bw);
 
-			cm_rtpbcast_rtp_source *src =
-				cm_rtpbcast_pick_source(sessid->source->mp->sources, bw);
+				/* Check if we really need to switch */
+				if (src != sessid->source) {
+					janus_mutex_lock(&sessid->source->mutex);
+					sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
+					sessid->source = src;
+					janus_mutex_unlock(&sessid->source->mutex);
 
-			/* Check if we really need to switch */
-			if (src != sessid->source) {
-				janus_mutex_lock(&sessid->source->mutex);
-				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
-				sessid->source = src;
-				janus_mutex_unlock(&sessid->source->mutex);
-
-				janus_mutex_lock(&src->mutex);
-				src->listeners = g_list_append(src->listeners, sessid);
-				janus_mutex_unlock(&src->mutex);
+					janus_mutex_lock(&src->mutex);
+					src->listeners = g_list_append(src->listeners, sessid);
+					janus_mutex_unlock(&src->mutex);
+				}
 			}
 		}
 	}
