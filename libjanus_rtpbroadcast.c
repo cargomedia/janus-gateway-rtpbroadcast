@@ -1434,7 +1434,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		}
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source && oldremb != sessid->remb) {
+		if (sessid->source && oldremb != sessid->remb && sessid->remb != 0) {
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
