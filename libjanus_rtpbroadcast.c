@@ -379,6 +379,7 @@ typedef struct cm_rtpbcast_session {
 	guint64 last_remb_usec;
 	guint64 rembsum;
 	guint rembcount;
+	guint64 last_switch;
 
 	gboolean started;
 	gboolean paused;
@@ -717,6 +718,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = session->last_remb_usec = session->rembsum = session->rembcount = 0;
+	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -1424,7 +1426,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		if (!sessid->last_remb_usec)
 			sessid->last_remb_usec = ml;
 		/* Otherwise check if we stepped out */
-		else if (ml + sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+		else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
 			/* Calculate average */
 			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
 
@@ -1434,7 +1436,9 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		}
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source && oldremb != sessid->remb && sessid->remb != 0) {
+		if (sessid->source &&
+				oldremb != sessid->remb && sessid->remb != 0 &&
+					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
@@ -1448,6 +1452,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				janus_mutex_lock(&src->mutex);
 				src->listeners = g_list_append(src->listeners, sessid);
 				janus_mutex_unlock(&src->mutex);
+
+				sessid->last_switch = ml;
 			}
 		}
 	}
