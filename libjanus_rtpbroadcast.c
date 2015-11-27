@@ -226,8 +226,9 @@ static struct {
 	const char *thumbnailing_pattern;
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
-	guint downgrade_avg_time;
-	guint upgrade_avg_time;
+	guint source_avg_time;
+	guint remb_avg_time;
+	guint switching_delay;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -236,23 +237,17 @@ typedef struct cm_rtpbcast_codecs {
 	char *fmtp[AV];
 } cm_rtpbcast_codecs;
 
-#define STAT_UPDATE_DELAY 1000000
+#define STAT_SECOND 1000000
 typedef struct cm_rtpbcast_stats {
 	gdouble min;
 	gdouble max;
 	gdouble cur;
 	gdouble avg;
-	gdouble cur_up;
-	gdouble cur_down;
 
 	guint64 start_usec;
 	guint64 last_avg_usec;
-	guint64 last_avg_up_usec;
-	guint64 last_avg_down_usec;
 	guint64 bytes_since_start;
 	guint64 bytes_since_last_avg;
-	guint64 bytes_since_last_avg_up;
-	guint64 bytes_since_last_avg_down;
 
 	janus_mutex stat_mutex;
 } cm_rtpbcast_stats;
@@ -378,7 +373,13 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
+
+	/* REMB and auxillary vars for math */
 	guint64 remb;
+	guint64 last_remb_usec;
+	guint64 rembsum;
+	guint rembcount;
+
 	gboolean started;
 	gboolean paused;
 	cm_rtpbcast_context context;
@@ -502,8 +503,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Defauts */
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
-	cm_rtpbcast_settings.upgrade_avg_time = 10;
-	cm_rtpbcast_settings.downgrade_avg_time = 2;
+	cm_rtpbcast_settings.source_avg_time = 10;
+	cm_rtpbcast_settings.remb_avg_time = 3;
+	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
@@ -527,16 +529,18 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"maxport",
 				"thumbnailing_interval",
 				"thumbnailing_duration",
-				"upgrade_avg_time",
-				"downgrade_avg_time"
+				"source_avg_time",
+				"remb_avg_time",
+				"switching_delay"
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
 				&cm_rtpbcast_settings.maxport,
 				&cm_rtpbcast_settings.thumbnailing_interval,
 				&cm_rtpbcast_settings.thumbnailing_duration,
-				&cm_rtpbcast_settings.upgrade_avg_time,
-				&cm_rtpbcast_settings.downgrade_avg_time
+				&cm_rtpbcast_settings.source_avg_time,
+				&cm_rtpbcast_settings.remb_avg_time,
+				&cm_rtpbcast_settings.switching_delay
 			};
 
 			_foreach(i, ivars) {
@@ -712,7 +716,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
-	session->remb = 0;
+	session->remb = session->last_remb_usec = session->rembsum = session->rembcount = 0;
 	session->mps = NULL;
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -888,8 +892,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				json_object_set_new(s, "max", json_real(src->stats.max));
 				json_object_set_new(s, "cur", json_real(src->stats.cur));
 				json_object_set_new(s, "avg", json_real(src->stats.avg));
-				json_object_set_new(s, "cur_up", json_real(src->stats.cur_up));
-				json_object_set_new(s, "cur_down", json_real(src->stats.cur_down));
 				janus_mutex_unlock(&src->stats.stat_mutex);
 
 				json_object_set_new(v, "stats", s);
@@ -1411,26 +1413,41 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
-		sessid->remb = bw;
+
+		/* Adding the REMB to sum */
+		sessid->rembsum += bw;
+		sessid->rembcount ++;
+		guint64 oldremb = sessid->remb;
+
+		/* If it's first measurement, start the timer */
+		guint64 ml = janus_get_monotonic_time();
+		if (!sessid->last_remb_usec)
+			sessid->last_remb_usec = ml;
+		/* Otherwise check if we stepped out */
+		else if (ml + sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+			/* Calculate average */
+			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
+
+			/* Reset timers */
+			sessid->rembsum = sessid->rembcount = 0;
+			sessid->last_remb_usec = ml;
+		}
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source) {
-			/* Switching if remb falls withing the bands of upgrade and downgrade averages */
-			if (bw < sessid->source->stats.cur_down || bw > sessid->source->stats.cur_up) {
-				cm_rtpbcast_rtp_source *src =
-					cm_rtpbcast_pick_source(sessid->source->mp->sources, bw);
+		if (sessid->source && oldremb != sessid->remb) {
+			cm_rtpbcast_rtp_source *src =
+				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
-				/* Check if we really need to switch */
-				if (src != sessid->source) {
-					janus_mutex_lock(&sessid->source->mutex);
-					sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
-					sessid->source = src;
-					janus_mutex_unlock(&sessid->source->mutex);
+			/* Check if we really need to switch */
+			if (src != sessid->source) {
+				janus_mutex_lock(&sessid->source->mutex);
+				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
+				sessid->source = src;
+				janus_mutex_unlock(&sessid->source->mutex);
 
-					janus_mutex_lock(&src->mutex);
-					src->listeners = g_list_append(src->listeners, sessid);
-					janus_mutex_unlock(&src->mutex);
-				}
+				janus_mutex_lock(&src->mutex);
+				src->listeners = g_list_append(src->listeners, sessid);
+				janus_mutex_unlock(&src->mutex);
 			}
 		}
 	}
@@ -2222,8 +2239,6 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	guint64 ml = janus_get_monotonic_time();
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
-	st->last_avg_up_usec = ml;
-	st->last_avg_down_usec = ml;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -2234,51 +2249,23 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 	/* This overflows at 17179869184 GB of traffic just in case :) */
 	st->bytes_since_start += bytes;
 	st->bytes_since_last_avg += bytes;
-	st->bytes_since_last_avg_up += bytes;
-	st->bytes_since_last_avg_down += bytes;
 
 	guint64 ml = janus_get_monotonic_time();
 	guint64 delay;
 
-	guint64 *bytes_since[] = {
-			&st->bytes_since_last_avg,
-			&st->bytes_since_last_avg_up,
-			&st->bytes_since_last_avg_down
-		};
-	gdouble *avg_vars[] = {
-			&st->cur,
-			&st->cur_up,
-			&st->cur_down
-		};
-	guint64 delays[] = {
-			STAT_UPDATE_DELAY,
-			cm_rtpbcast_settings.upgrade_avg_time * STAT_UPDATE_DELAY,
-			cm_rtpbcast_settings.downgrade_avg_time * STAT_UPDATE_DELAY
-		};
-	guint64 *usec_vars[] = {
-			&st->last_avg_usec,
-			&st->last_avg_up_usec,
-			&st->last_avg_down_usec
-		};
-
 	/* If we step over delay, calculate current and compare min/max */
-	_foreach(i, avg_vars) {
-		if (ml - *usec_vars[i] >= delays[i]) {
-			/* Calculate */
-			delay = ml - *usec_vars[i];
-			*avg_vars[i] = (8.0L*10e5L)*(gdouble)(*bytes_since[i]) / (delay != 0 ? delay : 1);
-			/* Reset timer */
-			*bytes_since[i] = 0;
-			*usec_vars[i] = ml;
-
-			/* Only recording extrema for every second average */
-			if (i == 0) {
-				if (*avg_vars[i] > st->max)
-					st->max = *avg_vars[i];
-				if (*avg_vars[i] < st->min || st->min == 0.0L)
-					st->min = *avg_vars[i];
-			}
-		}
+	if (ml - st->last_avg_usec >= cm_rtpbcast_settings.source_avg_time * STAT_SECOND) {
+		/* Calculate */
+		delay = ml - st->last_avg_usec;
+		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (delay != 0 ? delay : 1);
+		/* Reset timer */
+		st->bytes_since_last_avg  = 0;
+		st->last_avg_usec = ml;
+		/* Updating min max */
+		if (st->cur > st->max)
+			st->max = st->cur;
+		if (st->cur < st->min || st->min == 0.0L)
+			st->min = st->cur;
 	}
 
 	/* Re-calculate average regardless */
