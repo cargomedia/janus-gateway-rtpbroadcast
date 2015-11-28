@@ -226,6 +226,9 @@ static struct {
 	const char *thumbnailing_pattern;
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
+	guint source_avg_time;
+	guint remb_avg_time;
+	guint switching_delay;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -234,7 +237,7 @@ typedef struct cm_rtpbcast_codecs {
 	char *fmtp[AV];
 } cm_rtpbcast_codecs;
 
-#define STAT_UPDATE_DELAY 1000000
+#define STAT_SECOND 1000000
 typedef struct cm_rtpbcast_stats {
 	gdouble min;
 	gdouble max;
@@ -370,7 +373,14 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
+
+	/* REMB and auxillary vars for math */
 	guint64 remb;
+	guint64 last_remb_usec;
+	guint64 rembsum;
+	guint rembcount;
+	guint64 last_switch;
+
 	gboolean started;
 	gboolean paused;
 	cm_rtpbcast_context context;
@@ -494,6 +504,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Defauts */
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
+	cm_rtpbcast_settings.source_avg_time = 10;
+	cm_rtpbcast_settings.remb_avg_time = 3;
+	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
@@ -514,13 +527,21 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		{
 			const char *inames [] = {
 				"minport",
-				"maxport"
+				"maxport",
+				"thumbnailing_interval",
+				"thumbnailing_duration",
+				"source_avg_time",
+				"remb_avg_time",
+				"switching_delay"
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
 				&cm_rtpbcast_settings.maxport,
 				&cm_rtpbcast_settings.thumbnailing_interval,
-				&cm_rtpbcast_settings.thumbnailing_duration
+				&cm_rtpbcast_settings.thumbnailing_duration,
+				&cm_rtpbcast_settings.source_avg_time,
+				&cm_rtpbcast_settings.remb_avg_time,
+				&cm_rtpbcast_settings.switching_delay
 			};
 
 			_foreach(i, ivars) {
@@ -696,7 +717,8 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
-	session->remb = 0;
+	session->remb = session->last_remb_usec = session->rembsum = session->rembcount = 0;
+	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -830,6 +852,14 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
 	if(!strcasecmp(request_text, "list")) {
+		json_t *id = json_object_get(root, "id");
+		if(id && !json_is_string(id) < 0) {
+			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
+			goto error;
+		}
+
 		json_t *list = json_array();
 		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
 		/* Return a list of all available mountpoints */
@@ -839,6 +869,12 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		g_hash_table_iter_init(&iter, mountpoints);
 		while (g_hash_table_iter_next(&iter, NULL, &value)) {
 			cm_rtpbcast_mountpoint *mp = value;
+
+			/* If id is given, skip others */
+			/* TODO: @landswellsong refactor this without a loop */
+			if (id && strcmp(json_string_value(id), mp->id) != 0)
+				continue;
+
 			json_t *ml = json_object();
 			json_object_set_new(ml, "id", json_string(mp->id));
 			json_object_set_new(ml, "name", json_string(mp->name));
@@ -1380,12 +1416,31 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
 
-		/* TODO @landswellsong maybe some threshold */
-		if (sessid->remb != bw) {
-			sessid->remb = bw;
+		/* Adding the REMB to sum */
+		sessid->rembsum += bw;
+		sessid->rembcount ++;
+		guint64 oldremb = sessid->remb;
 
+		/* If it's first measurement, start the timer */
+		guint64 ml = janus_get_monotonic_time();
+		if (!sessid->last_remb_usec)
+			sessid->last_remb_usec = ml;
+		/* Otherwise check if we stepped out */
+		else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+			/* Calculate average */
+			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
+
+			/* Reset timers */
+			sessid->rembsum = sessid->rembcount = 0;
+			sessid->last_remb_usec = ml;
+		}
+
+		/* If the session is watching something, let's see if it needs switching */
+		if (sessid->source &&
+				oldremb != sessid->remb && sessid->remb != 0 &&
+					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
 			cm_rtpbcast_rtp_source *src =
-				cm_rtpbcast_pick_source(sessid->source->mp->sources, bw);
+				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
 			/* Check if we really need to switch */
 			if (src != sessid->source) {
@@ -1397,6 +1452,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				janus_mutex_lock(&src->mutex);
 				src->listeners = g_list_append(src->listeners, sessid);
 				janus_mutex_unlock(&src->mutex);
+
+				sessid->last_switch = ml;
 			}
 		}
 	}
@@ -2203,16 +2260,18 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 	guint64 delay;
 
 	/* If we step over delay, calculate current and compare min/max */
-	if (ml - st->last_avg_usec >= STAT_UPDATE_DELAY) {
+	if (ml - st->last_avg_usec >= cm_rtpbcast_settings.source_avg_time * STAT_SECOND) {
+		/* Calculate */
 		delay = ml - st->last_avg_usec;
 		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (delay != 0 ? delay : 1);
+		/* Reset timer */
+		st->bytes_since_last_avg  = 0;
+		st->last_avg_usec = ml;
+		/* Updating min max */
 		if (st->cur > st->max)
 			st->max = st->cur;
 		if (st->cur < st->min || st->min == 0.0L)
 			st->min = st->cur;
-
-		st->bytes_since_last_avg = 0;
-		st->last_avg_usec = ml;
 	}
 
 	/* Re-calculate average regardless */

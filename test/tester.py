@@ -48,14 +48,13 @@ def attach(plugin = "janus.plugin.cm.rtpbroadcast"):
                 "transaction": "tester.py",
                 "session_id": session_id }, not session_id, helper)
 
-def list():
+def list(id=None):
+    body = not id and { "request": "list" } or { "request": "list", "id": id}
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
                 "session_id": session_id,
                 "handle_id": handle_id,
-                "body": {
-                    "request": "list"
-                } }, not session_id or not handle_id)
+                "body": body}, not session_id or not handle_id)
 
 def create(id=mountpoint_id):
     def helper(j):
@@ -110,6 +109,8 @@ videorate_min = 20000
 videorate_max = 156000
 audiorate_min = 6000
 audiorate_max = 20000
+pattern = "ball"
+fontsize = 100
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
     global streamer
@@ -125,9 +126,10 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "
             args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(ports[i*2]) + "  "
-            args+="  videotestsrc ! "
+            args+="  videotestsrc pattern = '" + pattern + "' ! "
             args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
+            args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
             args+="    vp8enc error-resilient=true target-bitrate=" + str(vrate) + " ! "
             args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
