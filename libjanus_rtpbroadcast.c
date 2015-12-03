@@ -1443,6 +1443,9 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				oldremb != sessid->remb && sessid->remb != 0 &&
 					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
 
+			if (sessid->source == NULL)
+				return;
+
 			if (sessid->source->mp == NULL)
 				return;
 
