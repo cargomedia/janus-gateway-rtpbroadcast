@@ -1411,6 +1411,9 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if (sessid == NULL)
 		return;
 
+	if (sessid->stopping || sessid->paused)
+		return;
+
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
@@ -1439,6 +1442,16 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		if (sessid->source &&
 				oldremb != sessid->remb && sessid->remb != 0 &&
 					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
+
+			if (sessid->source == NULL)
+				return;
+
+			if (sessid->source->mp == NULL)
+				return;
+
+			if (sessid->source->mp->sources == NULL)
+				return;
+
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
