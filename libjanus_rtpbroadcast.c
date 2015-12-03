@@ -1452,8 +1452,10 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 			if (sessid->source->mp->sources == NULL)
 				return;
 
+			janus_mutex_lock(&sessid->source->mutex);
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
+			janus_mutex_unlock(&sessid->source->mutex);
 
 			/* Check if we really need to switch */
 			if (src && src != sessid->source) {
