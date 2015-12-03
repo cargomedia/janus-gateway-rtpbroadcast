@@ -1411,6 +1411,9 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if (sessid == NULL)
 		return;
 
+	if (sessid->stopping || sessid->paused)
+		return;
+
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
@@ -1423,10 +1426,10 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 		/* If it's first measurement, start the timer */
 		guint64 ml = janus_get_monotonic_time();
-		if (!sessid->last_remb_usec)
+		if (!sessid->last_remb_usec) {
 			sessid->last_remb_usec = ml;
 		/* Otherwise check if we stepped out */
-		else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+		} else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
 			/* Calculate average */
 			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
 
@@ -1439,11 +1442,23 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		if (sessid->source &&
 				oldremb != sessid->remb && sessid->remb != 0 &&
 					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
+
+			if (sessid->source == NULL)
+				return;
+
+			if (sessid->source->mp == NULL)
+				return;
+
+			if (sessid->source->mp->sources == NULL)
+				return;
+
+			janus_mutex_lock(&sessid->source->mutex);
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
+			janus_mutex_unlock(&sessid->source->mutex);
 
 			/* Check if we really need to switch */
-			if (src != sessid->source) {
+			if (src && src != sessid->source) {
 				janus_mutex_lock(&sessid->source->mutex);
 				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
 				sessid->source = src;
@@ -2293,12 +2308,13 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 	   no such source found */
 	guint i = 0; cm_rtpbcast_rtp_source *src; guint64 source_remb;
+	guint s_count = sources->len;
 	do {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats.stat_mutex);
 		source_remb = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
-	} while (i < sources->len && remb < source_remb);
+	} while (i < s_count && remb < source_remb);
 
 	return src;
 }
