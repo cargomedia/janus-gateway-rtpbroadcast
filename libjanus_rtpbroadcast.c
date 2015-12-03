@@ -1423,10 +1423,10 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 		/* If it's first measurement, start the timer */
 		guint64 ml = janus_get_monotonic_time();
-		if (!sessid->last_remb_usec)
+		if (!sessid->last_remb_usec) {
 			sessid->last_remb_usec = ml;
 		/* Otherwise check if we stepped out */
-		else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+		} else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
 			/* Calculate average */
 			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
 
@@ -1443,7 +1443,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
 
 			/* Check if we really need to switch */
-			if (src != sessid->source) {
+			if (src && src != sessid->source) {
 				janus_mutex_lock(&sessid->source->mutex);
 				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
 				sessid->source = src;
