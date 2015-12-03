@@ -2306,12 +2306,13 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 	   no such source found */
 	guint i = 0; cm_rtpbcast_rtp_source *src; guint64 source_remb;
+	guint s_count = sources->len;
 	do {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats.stat_mutex);
 		source_remb = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
-	} while (i < sources->len && remb < source_remb);
+	} while (i < s_count && remb < source_remb);
 
 	return src;
 }
