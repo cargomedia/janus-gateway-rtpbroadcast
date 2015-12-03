@@ -1668,12 +1668,11 @@ static void *cm_rtpbcast_handler(void *data) {
 			result = json_object();
 			json_object_set_new(result, "status", json_string("pausing"));
 		} else if(!strcasecmp(request_text, "switch")) {
-			#if 0
 			/* This listener wants to switch to a different mountpoint
 			 * NOTE: this only works for live RTP streams as of now: you
 			 * cannot, for instance, switch from a live RTP mountpoint to
 			 * an on demand one or viceversa (TBD.) */
-			cm_rtpbcast_mountpoint *oldmp = session->mountpoint;
+			cm_rtpbcast_mountpoint *oldmp = session->source->mp;
 			if(oldmp == NULL) {
 				JANUS_LOG(LOG_VERB, "Can't switch: not on a mountpoint\n");
 				error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
@@ -1706,22 +1705,25 @@ static void *cm_rtpbcast_handler(void *data) {
 			janus_mutex_unlock(&mountpoints_mutex);
 			JANUS_LOG(LOG_VERB, "Request to switch to mountpoint/stream %s (old: %s)\n", id_value, oldmp->id);
 			session->paused = TRUE;
+
+			cm_rtpbcast_rtp_source *oldsrc = session->source;
+			cm_rtpbcast_rtp_source *newsrc = cm_rtpbcast_pick_source(mp->sources, session->remb);
+
 			/* Unsubscribe from the previous mountpoint and subscribe to the new one */
-			janus_mutex_lock(&oldmp->mutex);
-			oldmp->listeners = g_list_remove_all(oldmp->listeners, session);
-			janus_mutex_unlock(&oldmp->mutex);
+			janus_mutex_lock(&oldsrc->mutex);
+			oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
+			janus_mutex_unlock(&oldsrc->mutex);
 			/* Subscribe to the new one */
-			janus_mutex_lock(&mp->mutex);
-			mp->listeners = g_list_append(mp->listeners, session);
-			janus_mutex_unlock(&mp->mutex);
-			session->mountpoint = mp;
+			janus_mutex_lock(&newsrc->mutex);
+			newsrc->listeners = g_list_append(newsrc->listeners, session);
+			janus_mutex_unlock(&newsrc->mutex);
+			session->source = newsrc;
 			session->paused = FALSE;
 			/* Done */
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
 			json_object_set_new(result, "switched", json_string("ok"));
 			json_object_set_new(result, "id", json_string(id_value));
-			#endif // start
 		} else if(!strcasecmp(request_text, "stop")) {
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
