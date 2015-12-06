@@ -28,6 +28,10 @@ Vagrant.configure('2') do |config|
      'rm -fr libwebsockets',
      'git clone git://git.libwebsockets.org/libwebsockets',
      'cd libwebsockets',
+     # upstream libwebsockets is not compatible with out janus snapshot
+     # on the configure level because it looks for a function that was
+     # redefined as a macro, hence using a tag instead of HEAD
+     'git checkout v1.5-chrome47-firefox41',
      'mkdir build',
      'cd build',
      'cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr ..',
