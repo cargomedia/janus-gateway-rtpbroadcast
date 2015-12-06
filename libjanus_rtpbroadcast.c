@@ -2139,6 +2139,47 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 				packet.timestamp = ntohl(packet.data->timestamp);
 				packet.seq_number = ntohs(packet.data->seq_number);
+
+				/* Detect if the packet is the begnning of a key frame
+				 * Code is verbose on purpose for readability, compiler will optimise
+				 * Refer to https://tools.ietf.org/html/draft-ietf-payload-vp8-17 */
+				/* TODO: @landswellsong assuming VP8 codec only */
+				if (j == VIDEO) {
+					/* CC count */
+					guint8 cc = buffer[0] & 0x0F;
+
+					/* Start of VP8 payload descriptor */
+					guint8 vp8_pd = 4 * 3 + cc * 4;
+
+					/* Flags */
+					guint8 flags = buffer[vp8_pd];
+
+					/* VP8 header */
+					guint8 vp8_hd = vp8_pd + 1;
+
+					/* Optional headers */
+					if (flags & 0x80) { /* 'X' flag */
+						vp8_hd++;
+						guint8 xflags = buffer[vp8_pd + 1];
+
+						if (xflags & 0x80) { /* 'I' flag */
+							vp8_hd++;
+							if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
+								vp8_hd++;
+						}
+						if (xflags & 0x60) /* 'L' flag */
+							vp8_hd++;
+						if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
+							vp8_hd++;
+					}
+
+					/* If this is a key frame and the first packet of the frame
+					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
+					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
+						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n",name, GPOINTER_TO_UINT(source));
+					}
+				}
+
 				/* Go! */
 				janus_mutex_lock(&source->mutex);
 				g_list_foreach(source->listeners, cm_rtpbcast_relay_rtp_packet, &packet);

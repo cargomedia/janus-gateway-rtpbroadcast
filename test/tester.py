@@ -109,8 +109,12 @@ videorate_min = 20000
 videorate_max = 156000
 audiorate_min = 6000
 audiorate_max = 20000
+
+# Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
+keyframedist = 120
+
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
     global streamer
@@ -130,7 +134,7 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
-            args+="    vp8enc error-resilient=true target-bitrate=" + str(vrate) + " ! "
+            args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
             args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
