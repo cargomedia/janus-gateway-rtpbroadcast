@@ -8,7 +8,7 @@ Vagrant.configure('2') do |config|
      libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev \
      libopus-dev libogg-dev libini-config-dev libcollection-dev \
      libavutil-dev libavcodec-dev libavformat-dev \
-     pkg-config gengetopt libcurl4-openssl-dev libtool automake cmake',
+     pkg-config gengetopt libcurl4-openssl-dev libtool automake cmake git',
      'cd',
      # Dep 1
      'wget https://github.com/cisco/libsrtp/archive/v1.5.0.tar.gz',
