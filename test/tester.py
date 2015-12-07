@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -i
 # -*- coding: utf-8 -*-
 
-import requests, json, subprocess
+import requests, json, subprocess, time
 
 janus_url = "http://localhost:8088/janus"
 mountpoint_id = "Ababagalamaga"
@@ -34,10 +34,16 @@ def greet():
     janus_cmd({ "janus": "create",
                 "transaction": "tester.py"}, action = helper)
 
-def keepalive():
+# If delay != 0, sends keepalives every second over delay seconds
+def keepalive(delay = 0):
     janus_cmd({ "janus": "keepalive",
                 "transaction": "tester.py",
                 "session_id": session_id }, not session_id)
+    if delay > 0:
+        for i in range(0,delay):
+            time.sleep(1)
+            keepalive()
+
 
 def attach(plugin = "janus.plugin.cm.rtpbroadcast"):
     def helper(j):
@@ -124,8 +130,8 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
         print("Streamer already active!")
     else:
         for i in range(0,nstreams):
-            arate = int(amin+i*(amax-amin)/(nstreams-1))
-            vrate = int(vmin+i*(vmax-vmin)/(nstreams-1))
+            arate = int(amin+(nstreams-i-1)*(amax-amin)/(nstreams-1))
+            vrate = int(vmin+(nstreams-i-1)*(vmax-vmin)/(nstreams-1))
             args+="  audiotestsrc !  "
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "

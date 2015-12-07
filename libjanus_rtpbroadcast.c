@@ -294,9 +294,13 @@ typedef struct cm_rtpbcast_rtp_source {
 	cm_rtpbcast_mountpoint *mp;
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
+	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
+static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
+static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
+static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -373,6 +377,7 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
+	cm_rtpbcast_rtp_source *nextsource; /* Source to switch after a keyframe */
 
 	/* REMB and auxillary vars for math */
 	guint64 remb;
@@ -388,6 +393,8 @@ typedef struct cm_rtpbcast_session {
 	gboolean stopping;
 	volatile gint hangingup;
 	gint64 destroyed;	/* Time at which this session was marked as destroyed */
+
+	janus_mutex mutex;
 } cm_rtpbcast_session;
 static GHashTable *sessions;
 static GList *old_sessions;
@@ -714,12 +721,14 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	}
 	session->handle = handle;
 	session->source = NULL;	/* This will happen later */
+	session->nextsource = NULL;
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = session->last_remb_usec = session->rembsum = session->rembcount = 0;
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
+	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
@@ -1459,14 +1468,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 			/* Check if we really need to switch */
 			if (src && src != sessid->source) {
-				janus_mutex_lock(&sessid->source->mutex);
-				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
-				sessid->source = src;
-				janus_mutex_unlock(&sessid->source->mutex);
-
-				janus_mutex_lock(&src->mutex);
-				src->listeners = g_list_append(src->listeners, sessid);
-				janus_mutex_unlock(&src->mutex);
+				cm_rtpbcast_schedule_switch(sessid, src);
 
 				sessid->last_switch = ml;
 			}
@@ -1857,6 +1859,7 @@ static void cm_rtpbcast_rtp_source_free(gpointer src) {
 
 	janus_mutex_lock(&source->mutex);
 	g_list_free(source->listeners);
+	g_list_free(source->waiters);
 	janus_mutex_unlock(&source->mutex);
 
 	g_free(source);
@@ -1932,6 +1935,7 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		memset(&live_rtp_source->stats, 0, sizeof(live_rtp_source->stats));
 
 		live_rtp_source->listeners = NULL;
+		live_rtp_source->waiters = NULL;
 		janus_mutex_init(&live_rtp_source->mutex);
 
 		for (j = AUDIO; j <= VIDEO; j++) {
@@ -2632,5 +2636,80 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 		g_hash_table_remove(mountpoints, mp->id);
 		/* Cleaning up and removing the mountpoint is done in a lazy way */
 		old_mountpoints = g_list_append(old_mountpoints, mp);
+	}
+}
+
+void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc) {
+	JANUS_LOG(LOG_VERB, "Scheduling session 0x%x to switch to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(newsrc));
+	cm_rtpbcast_rtp_source *ns = sessid->nextsource;
+	if (ns == newsrc)
+		return; /* Nothing to do */
+
+	janus_mutex_lock(&sessid->mutex);
+	/* Clearing old switching source if any */
+	if (ns) {
+		janus_mutex_lock(&ns->mutex);
+		ns->waiters = g_list_remove_all(ns->waiters, sessid);
+		sessid->nextsource = NULL;
+		janus_mutex_unlock(&ns->mutex);
+	}
+
+	/* Attaching to a new source */
+	sessid->nextsource = newsrc;
+	janus_mutex_lock(&newsrc->mutex);
+	newsrc->waiters = g_list_prepend(newsrc->waiters, sessid);
+	janus_mutex_unlock(&newsrc->mutex);
+
+	janus_mutex_unlock(&sessid->mutex);
+}
+
+void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid) {
+	JANUS_LOG(LOG_VERB, "Unscheduling session 0x%x from switching\n", GPOINTER_TO_UINT(sessid));
+	cm_rtpbcast_rtp_source *ns = sessid->nextsource;
+	if (ns) {
+		janus_mutex_lock(&ns->mutex);
+		janus_mutex_lock(&sessid->mutex);
+
+		ns->waiters = g_list_remove_all(ns->waiters, sessid);
+		sessid->nextsource = NULL;
+
+		janus_mutex_unlock(&sessid->mutex);
+		janus_mutex_unlock(&ns->mutex);
+	}
+}
+
+static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
+	cm_rtpbcast_session *sessid = (cm_rtpbcast_session *)data;
+	cm_rtpbcast_rtp_source *source = (cm_rtpbcast_rtp_source *)user_data;
+	cm_rtpbcast_rtp_source *oldsrc = sessid->source;
+
+	janus_mutex_lock(&sessid->mutex);
+
+	/* If somehow the sources are the same, prevent a deadlock */
+	if (source != oldsrc)
+		janus_mutex_lock(&oldsrc->mutex);
+
+  /* Remove from old source and attach to new source */
+	oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
+	source->listeners = g_list_prepend(source->listeners, sessid);
+	sessid->source = source;
+	JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
+
+	if (source != oldsrc)
+		janus_mutex_lock(&oldsrc->mutex);
+
+	janus_mutex_unlock(&sessid->mutex);
+}
+
+
+void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
+	if (src->waiters) {
+		janus_mutex_lock(&src->mutex);
+		/* Switch everybody */
+		g_list_foreach(src->waiters, cm_rtpbcast_execute_switching, src);
+		/* Kill everybody */
+		g_list_free(src->waiters);
+		src->waiters = NULL;
+		janus_mutex_unlock(&src->mutex);
 	}
 }
