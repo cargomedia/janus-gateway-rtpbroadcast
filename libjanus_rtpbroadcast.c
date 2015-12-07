@@ -380,6 +380,7 @@ typedef struct cm_rtpbcast_session {
 	guint64 rembsum;
 	guint rembcount;
 	guint64 last_switch;
+	gboolean autoswitch;
 
 	gboolean started;
 	gboolean paused;
@@ -720,6 +721,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->remb = session->last_remb_usec = session->rembsum = session->rembcount = 0;
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
+	session->autoswitch = TRUE;
 
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
@@ -1287,7 +1289,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		#endif // record
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
-			|| !strcasecmp(request_text, "switch")) {
+			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
 		/* These messages are handled asynchronously */
 		cm_rtpbcast_message *msg = g_malloc0(sizeof(cm_rtpbcast_message));
 		if(msg == NULL) {
@@ -1414,6 +1416,9 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if (sessid->stopping || sessid->paused)
 		return;
 
+	if (!sessid->autoswitch)
+		return;
+
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
@@ -1459,6 +1464,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 			/* Check if we really need to switch */
 			if (src && src != sessid->source) {
+				sessid->autoswitch = FALSE;
+
 				janus_mutex_lock(&sessid->source->mutex);
 				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
 				sessid->source = src;
@@ -1469,6 +1476,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				janus_mutex_unlock(&src->mutex);
 
 				sessid->last_switch = ml;
+				sessid->autoswitch = TRUE;
 			}
 		}
 	}
@@ -1667,6 +1675,60 @@ static void *cm_rtpbcast_handler(void *data) {
 			session->paused = TRUE;
 			result = json_object();
 			json_object_set_new(result, "status", json_string("pausing"));
+		} else if(!strcasecmp(request_text, "switch-source")) {
+			/* This listener wants to switch to a different source of current mountpoint */
+			cm_rtpbcast_mountpoint *mp = session->source->mp;
+			if(mp == NULL) {
+				JANUS_LOG(LOG_INFO, "Can't switch: not on a mountpoint\n");
+				error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
+				g_snprintf(error_cause, 512, "Can't switch: not on a mountpoint");
+				goto error;
+			}
+			json_t *index = json_object_get(root, "index");
+			if(!index) {
+				JANUS_LOG(LOG_INFO, "Missing element (index)\n");
+				error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+				g_snprintf(error_cause, 512, "Missing element (index)");
+				goto error;
+			}
+			if(!json_is_integer(index)) {
+				JANUS_LOG(LOG_INFO, "Invalid element (index should be a integer)\n");
+				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+				g_snprintf(error_cause, 512, "Invalid element (index should be a integer)");
+				goto error;
+			}
+			guint index_value = json_integer_value(index);
+			if((mp->sources->len - index_value) < 0) {
+				JANUS_LOG(LOG_INFO, "No such source id in current mountpoint/stream\n");
+				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+				g_snprintf(error_cause, 512, "No such source in current mountpoint/stream");
+				goto error;
+			}
+
+			if(index_value) {
+				session->paused = TRUE;
+				cm_rtpbcast_rtp_source *oldsrc = session->source;
+				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
+				/* Unsubscribe from the previous mountpoint and subscribe to the new one */
+				janus_mutex_lock(&oldsrc->mutex);
+				oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
+				janus_mutex_unlock(&oldsrc->mutex);
+				/* Subscribe to the new one */
+				janus_mutex_lock(&newsrc->mutex);
+				newsrc->listeners = g_list_append(newsrc->listeners, session);
+				janus_mutex_unlock(&newsrc->mutex);
+				session->source = newsrc;
+				session->paused = FALSE;
+				session->autoswitch = FALSE;
+			} else {
+				session->autoswitch = TRUE;
+			}
+			/* Done */
+			result = json_object();
+			json_object_set_new(result, "streaming", json_string("event"));
+			json_object_set_new(result, "switched-source", json_string("ok"));
+			json_object_set_new(result, "index", json_integer(index_value));
+			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
 			#if 0
 			/* This listener wants to switch to a different mountpoint
