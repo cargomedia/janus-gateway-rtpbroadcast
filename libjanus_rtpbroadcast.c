@@ -2289,7 +2289,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							source->frame_y_scale = rtp_vp8h->height1 >> 6;
 							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
 							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
-						}Forma
+						}
 						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
 						cm_rtpbcast_process_switchers(source);
 					}
