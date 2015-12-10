@@ -1466,6 +1466,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 			if (sessid->source->mp->sources == NULL)
 				return;
 
+			janus_mutex_lock(&mountpoints_mutex);
+
 			janus_mutex_lock(&sessid->source->mutex);
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
@@ -1478,6 +1480,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				sessid->last_switch = ml;
 				sessid->autoswitch = TRUE;
 			}
+
+			janus_mutex_unlock(&mountpoints_mutex);
 		}
 	}
 	/* FIXME Maybe we should care about RTCP, but not now */
@@ -1706,19 +1710,8 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 
 			if(index_value) {
-				session->paused = TRUE;
-				cm_rtpbcast_rtp_source *oldsrc = session->source;
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
-				/* Unsubscribe from the previous mountpoint and subscribe to the new one */
-				janus_mutex_lock(&oldsrc->mutex);
-				oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
-				janus_mutex_unlock(&oldsrc->mutex);
-				/* Subscribe to the new one */
-				janus_mutex_lock(&newsrc->mutex);
-				newsrc->listeners = g_list_append(newsrc->listeners, session);
-				janus_mutex_unlock(&newsrc->mutex);
-				session->source = newsrc;
-				session->paused = FALSE;
+				cm_rtpbcast_schedule_switch(session, newsrc);
 				session->autoswitch = FALSE;
 			} else {
 				session->autoswitch = TRUE;
@@ -2243,6 +2236,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
 					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
 						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n",name, GPOINTER_TO_UINT(source));
+						cm_rtpbcast_process_switchers(source);
 					}
 				}
 
@@ -2758,7 +2752,7 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
 
 	if (source != oldsrc)
-		janus_mutex_lock(&oldsrc->mutex);
+		janus_mutex_unlock(&oldsrc->mutex);
 
 	janus_mutex_unlock(&sessid->mutex);
 }
