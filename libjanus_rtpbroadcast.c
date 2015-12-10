@@ -418,7 +418,7 @@ typedef struct cm_rtpbcast_rtp_relay_packet {
 	uint16_t seq_number;
 } cm_rtpbcast_rtp_relay_packet;
 
-typedef struct cm_rtp_header
+typedef struct cm_rtp_header_vp8
 {
 	uint16_t version:8;
 	uint16_t padding:8;
@@ -444,7 +444,7 @@ typedef struct cm_rtp_header
 	uint32_t height0:8;
 	uint32_t height1:8;
 	uint32_t csrc[4];
-} cm_rtp_header;
+} cm_rtp_header_vp8;
 
 /* Error codes */
 #define CM_RTPBCAST_ERROR_NO_MESSAGE			450
@@ -2279,20 +2279,17 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					/* If this is a key frame and the first packet of the frame
 					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
 					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
-
-						cm_rtp_header *rtp1 = (cm_rtp_header *)buffer;
-
-						if (rtp1->magic0 != 0x9d || rtp1->magic1 != 0x01 || rtp1->magic2 != 0x2a) {
+						cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+						if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
 							JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
 						} else {
-							source->frame_width = (int)(rtp1->width1&0x3f)<<8 | (int)(rtp1->width0);
-							source->frame_height = (int)(rtp1->height1&0x3f)<<8 | (int)(rtp1->height0);
-							source->frame_x_scale = rtp1->width1 >> 6;
-							source->frame_y_scale = rtp1->height1 >> 6;
+							source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
+							source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
+							source->frame_x_scale = rtp_vp8h->width1 >> 6;
+							source->frame_y_scale = rtp_vp8h->height1 >> 6;
 							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
 							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
-						}
-
+						}Forma
 						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
 						cm_rtpbcast_process_switchers(source);
 					}
