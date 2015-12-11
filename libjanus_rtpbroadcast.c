@@ -947,7 +947,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				json_object_set_new(s, "cur", json_real(src->stats.cur));
 				json_object_set_new(s, "avg", json_real(src->stats.avg));
 				janus_mutex_unlock(&src->stats.stat_mutex);
-
 				json_object_set_new(v, "stats", s);
 
 				json_t *f = json_object();
@@ -956,6 +955,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				json_object_set_new(f, "fps", json_integer(src->frame_rate));
 				json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
 				json_object_set_new(v, "frame", f);
+
+				json_t *u = json_object();
+				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
+				json_object_set_new(v, "session", u);
 
 				json_array_append_new(st, v);
 			}
