@@ -300,6 +300,13 @@ typedef struct cm_rtpbcast_rtp_source {
 	int frame_mbw;
 	int frame_mbh;
 
+	int frame_count;
+	int frame_last_count;
+	guint64 frame_last_usec;
+	int frame_rate;
+	int frame_key_last;
+	int frame_key_distance;
+
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
 	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
 	janus_mutex mutex;
@@ -941,10 +948,14 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				json_object_set_new(s, "avg", json_real(src->stats.avg));
 				janus_mutex_unlock(&src->stats.stat_mutex);
 
-				json_object_set_new(v, "width", json_integer(src->frame_width));
-				json_object_set_new(v, "height", json_integer(src->frame_height));
-
 				json_object_set_new(v, "stats", s);
+
+				json_t *f = json_object();
+				json_object_set_new(f, "width", json_integer(src->frame_width));
+				json_object_set_new(f, "height", json_integer(src->frame_height));
+				json_object_set_new(f, "fps", json_integer(src->frame_rate));
+				json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
+				json_object_set_new(v, "frame", f);
 
 				json_array_append_new(st, v);
 			}
@@ -2033,6 +2044,15 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		live_rtp_source->frame_mbw = 0;
 		live_rtp_source->frame_mbh = 0;
 
+		live_rtp_source->frame_count = 0;
+		live_rtp_source->frame_last_count = 0;
+		live_rtp_source->frame_last_usec = 0;
+
+		live_rtp_source->frame_rate = 0;
+
+		live_rtp_source->frame_key_last = 0;
+		live_rtp_source->frame_key_distance = 0;
+
 		live_rtp_source->listeners = NULL;
 		live_rtp_source->waiters = NULL;
 		janus_mutex_init(&live_rtp_source->mutex);
@@ -2278,20 +2298,41 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 					/* If this is a key frame and the first packet of the frame
 					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
+
+					cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+
 					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
-						cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+
 						if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
 							JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
 						} else {
+
 							source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
 							source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
 							source->frame_x_scale = rtp_vp8h->width1 >> 6;
 							source->frame_y_scale = rtp_vp8h->height1 >> 6;
 							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
 							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
+
+							source->frame_key_distance = source->frame_count - source->frame_key_last;
+							source->frame_key_last = source->frame_count;
+
+							JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
+							cm_rtpbcast_process_switchers(source);
 						}
-						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
-						cm_rtpbcast_process_switchers(source);
+					}
+
+					if (rtp_vp8h->byte0 & 0x01) {
+
+						guint64 ml = janus_get_monotonic_time();
+
+						if (ml - source->frame_last_usec >= STAT_SECOND) {
+							source->frame_rate = source->frame_count - source->frame_last_count;
+							source->frame_last_count = source->frame_count;
+
+							source->frame_last_usec = ml;
+						}
+						source->frame_count++;
 					}
 				}
 
