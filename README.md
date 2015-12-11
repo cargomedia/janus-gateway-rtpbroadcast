@@ -73,7 +73,7 @@ Synchronous actions
 -------------------
 It supports `create`, `destroy` actions and drops support for `recording` action.
 
-### `create`
+#### `create`
 
 **Request**:
 ```json
@@ -112,7 +112,7 @@ It responses with auto generated port number for audio and video using `minport`
 }
 ```
 
-### `destroy`
+#### `destroy`
 
 **Request**:
 
@@ -135,7 +135,7 @@ Asychronous actions
 It supports `start`, `stop`, `pause`, `switch` actions like native `janus` streaming plugins. It extends `list` action with new features, changes 
 `watch` action and introduces new `switch-source` action.
 
-### `list`
+#### `list`
 It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
 
 **Request**:
@@ -177,7 +177,7 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 ]
 ```
 
-### `watch`
+#### `watch`
 It will pick up first stream from the mountpoint list and assigns to the user session. 
 
 **Request**:
@@ -194,7 +194,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 }
 ```
 
-### `switch`
+#### `switch`
 It will switch the mountpoint for the session. By default will pick up first stream from the mountpoint list. 
 
 **Request**:
@@ -213,7 +213,7 @@ It will switch the mountpoint for the session. By default will pick up first str
 }
 ```
 
-### `switch-source`
+#### `switch-source`
 It will schedule switching of the stream for current session mountpoint to requested by `index` (position in the `streams`, see `list` action). 
 The switch will happened when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
 If `index` is equal to `0` then `auto-switch` support will be `ON`,
@@ -236,10 +236,11 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`,
 }
 ```
 
-### `stop`, `start`, `pause`
+#### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
 
-## Building
+Building
+--------
 
 If you got janus-gateway-rtpbroadcast from the git repository, you will first need to run the included `autogen.sh` script
 to generate the `configure` script.
