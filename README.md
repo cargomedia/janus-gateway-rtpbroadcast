@@ -220,7 +220,7 @@ The switch will happened when first kef-frame arrives for requested stream.
 ```json
 {
   "id": "<string>",
-  "index": <integer>
+  "index": "<integer>"
 }
 ```
 
