@@ -17,9 +17,9 @@ Main extensions:
 - automatically switches streams based on `WebRTC` client bandwidth (`REMB`)
 - allows to manually switch stream or turn off `autoswitch`
 - introduce whitelisting for incoming RTP packages based on IP
-- automatically records first provided stream in the list of streams
-- dumps stream into tiny thumbnailer archives
-- creates job files with events like new `record-archive` or `thumbnailer-archive`
+- automatically records the first provided stream (per mountpoint) into configurable archives
+- dumps stream RTP payload into configurable thumbnailer archives
+- creates job files with events like new `archive-finished` or `thumbnailing-finished`
 
 Configuration
 -------------
@@ -238,6 +238,37 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`,
 
 #### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
+
+Job files
+---------
+It creates configurable job files with store plugin events. Currently the `archive-finished` or `thumbnailing-finished`.
+
+#### `archive-finished` 
+```
+{
+    "data": {
+        "id": "1",
+        "video": "<archive_path/recording_pattern>.mjr",
+        "audio": "<archive_path/recording_pattern>.mjr"
+    },
+    "plugin": "janus.plugin.cm.rtpbroadcast",
+    "event": "archive-finished"
+}
+```
+
+#### `thumbnailing-finished`
+Thumbnailer creates archives of configurable duration for every configurable interval of time. 
+
+```
+{
+    "data": {
+        "id": "<string>",
+        "thumb": "<archive_path/thumbnailing_pattern>.mjr"
+    },
+    "plugin": "janus.plugin.cm.rtpbroadcast",
+    "event": "thumbnailing-finished"
+}
+```
 
 Building
 --------
