@@ -427,8 +427,22 @@ typedef struct cm_rtpbcast_rtp_relay_packet {
 
 typedef struct cm_rtp_header_vp8
 {
-	uint16_t version:8;
-	uint16_t padding:8;
+	/* RTP header */
+#if __BYTE_ORDER == __BIG_ENDIAN
+	uint16_t version:2;
+	uint16_t padding:1;
+	uint16_t extension:1;
+	uint16_t csrccount:4;
+	uint16_t markerbit:1;
+	uint16_t type:7;
+#elif __BYTE_ORDER == __LITTLE_ENDIAN
+	uint16_t csrccount:4;
+	uint16_t extension:1;
+	uint16_t padding:1;
+	uint16_t version:2;
+	uint16_t type:7;
+	uint16_t markerbit:1;
+#endif
 	uint16_t seq_number1:8;
 	uint16_t seq_number2:8;
 	uint32_t timestamp1:8;
@@ -439,18 +453,20 @@ typedef struct cm_rtp_header_vp8
 	uint32_t ssrc2:8;
 	uint32_t ssrc3:8;
 	uint32_t ssrc4:8;
+	/* RTP/VP8 header */
 	uint32_t byte0:8;
 	uint32_t byte1:8;
 	uint32_t byte2:8;
 	uint32_t byte3:8;
+	/* VP8 start bytes */
 	uint32_t magic0:8;
 	uint32_t magic1:8;
 	uint32_t magic2:8;
+	/* VP8 width, height, scale-x, scale-y */
 	uint32_t width0:8;
 	uint32_t width1:8;
 	uint32_t height0:8;
 	uint32_t height1:8;
-	uint32_t csrc[4];
 } cm_rtp_header_vp8;
 
 /* Error codes */
