@@ -275,11 +275,11 @@ Advanced
 
 #### Autoswitch
 It calculates advances stats for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in 
-configurable way depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload per sebscriber.
+configurable way depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload per subscriber.
 
 #### Scheduling
 It tracks `RTP/VP8` payload for key frames and trigger switch of waiting subscribers. The waiting list is defined per stream and keeps WebRTC session
-as reference. `Session` and be in waiting queue or if `autoswitch` is `ON` or by `switch-source` action request.
+as reference. `Session` can be in allocated to the waiting queue or if `autoswitch` is `ON` or by `switch-source` action request.
 
 Building
 --------
