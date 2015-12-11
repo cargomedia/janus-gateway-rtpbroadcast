@@ -9,7 +9,7 @@ Overview
 This plugin is based on native `janus` streaming plugin. It drops support for `LIVE`, `RTSP`, `VOD` and extends support for `RTP` streaming.
  
 Main extensions:
-- changes type of `id` from `integer` to `string`
+- changes type of mountpoint `id` from `integer` to `string`
 - allows to create multiple streams (sources) per mountpoint
 - tracks `VP8` RTP header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
 - extends RTP statistics for incoming streams
