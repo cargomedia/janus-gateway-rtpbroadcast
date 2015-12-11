@@ -11,15 +11,15 @@ This plugin is based on native `janus` streaming plugin. It drops support for `L
 Main extensions:
 - changes type of mountpoint `id` from `integer` to `string`
 - allows to create multiple streams (sources) per mountpoint
-- tracks `VP8` RTP header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
+- tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
 - extends RTP statistics for incoming streams
 - introduce `key-frame` based scheduling for stream switching
-- automatically switches streams based on `WebRTC` client bandwidth (`REMB`)
-- allows to manually switch stream or turn off `autoswitch`
-- introduce whitelisting for incoming RTP packages based on IP
+- introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
+- allows to manually switch the stream or turn off the `auto-switch`
+- introduce IP based white-listing for incoming RTP packages
 - automatically records the first provided stream (per mountpoint) into configurable archives
 - dumps stream RTP payload into configurable thumbnailer archives
-- creates job files with events like new `archive-finished` or `thumbnailing-finished`
+- creates job files and store events like new `archive-finished` or `thumbnailing-finished`
 
 Configuration
 -------------
@@ -132,7 +132,7 @@ It responses with auto generated port number for audio and video using `minport`
 
 Asychronous actions
 -------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus` streaming plugins. It extends `list` action with new features, changes 
+It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes 
 `watch` action and introduces new `switch-source` action.
 
 ##### `list`
@@ -214,9 +214,9 @@ It will switch the mountpoint for the session. By default will pick up first str
 ```
 
 ##### `switch-source`
-It will schedule switching of the stream for current session mountpoint to requested by `index` (position in the `streams`, see `list` action). 
-The switch will happened when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
-If `index` is equal to `0` then `auto-switch` support will be `ON`,
+It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action). 
+The switch will be triggered when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
+If `index` is equal to `0` then `auto-switch` support will be `ON`.
 
 **Request**:
 ```json
@@ -247,7 +247,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```
 {
     "data": {
-        "id": "1",
+        "id": "<string>",
         "video": "<archive_path/recording_pattern>.mjr",
         "audio": "<archive_path/recording_pattern>.mjr"
     },
@@ -257,7 +257,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```
 
 ##### `thumbnailing-finished`
-Thumbnailer creates archives of configurable duration for every configurable interval of time. 
+Thumbnailer creates archives of configurable duration for configurable interval of time. 
 
 ```
 {
@@ -274,16 +274,16 @@ Advanced
 --------
 
 #### Autoswitch
-It calculates advances stats for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in 
-configurable way depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload per subscriber.
+It calculates advanced statistics for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in 
+configurable manner which depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload of subscriber.
 
 #### Scheduling
-It tracks `RTP/VP8` payload for key frames and trigger switch of waiting subscribers. The waiting list is defined per stream and keeps WebRTC session
-as reference. `Session` can be in allocated to the waiting queue or if `autoswitch` is `ON` or by `switch-source` action request.
+It tracks `RTP/VP8` payload for `key-frames` and triggers the switch of waiting subscribers. The waiting list of subscribers is defined per 
+stream and keeps `WebRTC` session as reference. The `session` can be allocated to the waiting queue or by setting `autoswitch` to `ON` 
+or by sending the `switch-source` action request.
 
 Building
 --------
-
 If you got janus-gateway-rtpbroadcast from the git repository, you will first need to run the included `autogen.sh` script
 to generate the `configure` script.
 
