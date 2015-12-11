@@ -1,6 +1,6 @@
 janus-gateway-rtpbroadcast
 ==========================
-[janus-gateway](https://github.com/meetecho/janus-gateway) plugin for [cm-janus](https://github.com/cargomedia/cm-janus)
+[janus-gateway](https://github.com/meetecho/janus-gateway) custom plugin.
 
 [![Build Status](https://travis-ci.org/cargomedia/janus-gateway-rtpbroadcast.svg)](https://travis-ci.org/cargomedia/janus-gateway-rtpbroadcast)
 
@@ -284,8 +284,10 @@ or by sending the `switch-source` action request.
 
 Clients support
 ---------------
-This plugin can be managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using 
-[mountpoint](https://github.com/cargomedia/janus-gateway-ruby#plugins) resource. 
+This plugin can be directly managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using 
+[mountpoint](https://github.com/cargomedia/janus-gateway-ruby#plugins) resource.
+ 
+Additionally the `ACL` for publishers and subscribers, `job-file` handling can be directly managed by [cm-janus](https://github.com/cargomedia/cm-janus)
 
 Building
 --------
