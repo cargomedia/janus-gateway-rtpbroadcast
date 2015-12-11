@@ -69,8 +69,8 @@ Configuration
 ; thumbnailing_duration = 10
 ```
 
-Sychronous actions
-------------------
+Synchronous actions
+-------------------
 It supports `create`, `destroy` actions and drops support for `recording` action.
 
 ### `create`
@@ -104,8 +104,8 @@ It responses with auto generated port number for audio and video using `minport`
   "description": "<string>",
   "streams": [
     {
-      "audioport": <int>,
-      "videoport": <int>,
+      "audioport": "<int>",
+      "videoport": "<int>",
     }
   ]
 }
@@ -135,9 +135,13 @@ It supports `start`, `stop`, `pause`, `switch` actions like native `janus` strea
 `watch` action and introduces new `switch-source` action.
 
 ### `list`
+It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
 
 **Request**:
 ```json
+{
+  "id": "<string|null>"
+}
 ```
 
 **Response**:
@@ -149,22 +153,22 @@ It supports `start`, `stop`, `pause`, `switch` actions like native `janus` strea
      "description": "<string>",
      "streams": [
         {
-           "audioport": <int>,
-           "videoport": <int>,
+           "audioport": "<int>",
+           "videoport": "<int>",
            "stats": {
-              "min": <float>,
-              "max": <float>,
-              "cur": <float>,
-              "avg": <float>
+              "min": "<float>",
+              "max": "<float>",
+              "cur": "<float>",
+              "avg": "<float>"
            },
            "frame": {
-              "width": <int>,
-              "height": <int>,
-              "fps": <int>,
-              "key-distance": <int>
+              "width": "<int>",
+              "height": "<int>",
+              "fps": "<int>",
+              "key-distance": "<int>"
            },
            "session": {
-              "webrtc-active": <boolean>
+              "webrtc-active": "<boolean>"
            }
         }
      ]
@@ -226,7 +230,7 @@ The switch will happened when first kef-frame arrives for requested stream.
   "streaming": "event",
   "switched-source": "scheduled",
   "index": "<string>",
-  "autoswitch": <boolean>
+  "autoswitch": "<boolean>"
 }
 ```
 

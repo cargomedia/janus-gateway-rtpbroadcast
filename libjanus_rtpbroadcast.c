@@ -1770,7 +1770,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Done */
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switched-source", json_string("ok"));
+			json_object_set_new(result, "switched-source", json_string("scheduled"));
 			json_object_set_new(result, "index", json_integer(index_value));
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
