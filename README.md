@@ -282,6 +282,11 @@ It tracks `RTP/VP8` payload for `key-frames` and triggers the switch of waiting 
 stream and keeps `WebRTC` session as reference. The `session` can be allocated to the waiting queue or by setting `autoswitch` to `ON` 
 or by sending the `switch-source` action request.
 
+Clients support
+---------------
+This plugin can be managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using 
+[mountpoint](https://github.com/cargomedia/janus-gateway-ruby#plugins) resource. 
+
 Building
 --------
 If you got janus-gateway-rtpbroadcast from the git repository, you will first need to run the included `autogen.sh` script
