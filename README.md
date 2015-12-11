@@ -10,12 +10,12 @@ This plugin is based on native `janus` streaming plugin. It drops support for `L
  
 Main extensions:
 - changes type of `id` from `integer` to `string`
-- allows to create multiple streams per mountpoint
-- tracks VP8 rtp header workflow and provides width, height for frame and fps and key frame distance for stream
+- allows to create multiple streams (sources) per mountpoint
+- tracks `VP8` RTP header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
 - extends RTP statistics for incoming streams
-- introduce key-frame based scheduling for stream switching
-- automatically switches streams based on WebRTC client bandwidth (REMB)
-- allows to manually switch stream by subscriber
+- introduce `key-frame` based scheduling for stream switching
+- automatically switches streams based on `WebRTC` client bandwidth (`REMB`)
+- allows to manually switch stream or turn off `autoswitch`
 - introduce whitelisting for incoming RTP packages based on IP
 - automatically records first provided stream in the list of streams
 - dumps stream into tiny thumbnailer archives
@@ -96,6 +96,7 @@ It supports `create`, `destroy` actions and drops support for `recording` action
 
 **Response**:
 It responses with auto generated port number for audio and video using `minport` and `maxport` of config file. 
+
 ```json
 {
   "streaming": "created",
@@ -214,7 +215,8 @@ It will switch the mountpoint for the session. By default will pick up first str
 
 ### `switch-source`
 It will schedule switching of the stream for current session mountpoint to requested by `index` (position in the `streams`, see `list` action). 
-The switch will happened when first kef-frame arrives for requested stream.
+The switch will happened when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
+If `index` is equal to `0` then `auto-switch` support will be `ON`,
 
 **Request**:
 ```json
