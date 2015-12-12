@@ -13,8 +13,9 @@ Main extensions:
 - allows to create multiple streams (sources) per mountpoint
 - tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
 - extends RTP statistics for incoming streams
-- introduce `key-frame` based scheduling for stream switching
+- introduce `key-frame` based scheduling for stream and mountpoint switching
 - introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
+- scheduler pushes new media event to the subscriber if stream or mountpoint switches 
 - allows to manually switch the stream or turn off the `auto-switch`
 - introduce IP based white-listing for incoming RTP packages
 - automatically records the first provided stream (per mountpoint) into configurable archives
@@ -208,8 +209,9 @@ It will switch the mountpoint for the session. By default will pick up first str
 ```json
 {
   "streaming": "event",
-  "switched": "ok",
-  "id": "<string>"
+  "switch": "scheduled",
+  "mountpoint-up-id": "<string>",
+  "mountpoint-down-id": "<string>",
 }
 ```
 
@@ -230,7 +232,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 ```json
 {
   "streaming": "event",
-  "switched-source": "scheduled",
+  "switch-source": "scheduled",
   "index": "<string>",
   "autoswitch": "<boolean>"
 }
@@ -275,12 +277,30 @@ Advanced
 
 #### Autoswitch
 It calculates advanced statistics for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in 
-configurable manner which depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload of subscriber.
+configurable manner (see config file) which depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload of subscriber. 
+If "switch" condition is matched the switch action is queued in the `scheduler`. 
 
 #### Scheduling
 It tracks `RTP/VP8` payload for `key-frames` and triggers the switch of waiting subscribers. The waiting list of subscribers is defined per 
-stream and keeps `WebRTC` session as reference. The `session` can be allocated to the waiting queue or by setting `autoswitch` to `ON` 
-or by sending the `switch-source` action request.
+stream and keeps `WebRTC` session as reference. The `session` can be allocated to the waiting queue or by:
+- setting `autoswitch` to `ON` 
+- sending the `switch-source` action request
+- sending the `switch` action request
+
+If scheduled task is executed the subscriber receives media event:
+```
+{
+  "streaming": "event",
+  "result": {
+    "switch-source": "done",
+    "scheduler": 1,
+    "mountpoint-up-id": "2",
+    "stream-up-index": 3,
+    "mountpoint-down-id": "2",
+    "stream-down-index": 1
+  }
+}
+```
 
 Clients support
 ---------------
