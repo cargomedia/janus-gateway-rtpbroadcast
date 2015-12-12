@@ -13,9 +13,9 @@ Main extensions:
 - allows to create multiple streams (sources) per mountpoint
 - tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
 - extends RTP statistics for incoming streams
-- introduce `key-frame` based scheduling for stream and mountpoint switching
+- introduces `key-frame` based scheduling for stream and mountpoint switching
 - introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
-- scheduler pushes new media event to the subscriber if stream or mountpoint switches 
+- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler` 
 - allows to manually switch the stream or turn off the `auto-switch`
 - introduce IP based white-listing for incoming RTP packages
 - automatically records the first provided stream (per mountpoint) into configurable archives
