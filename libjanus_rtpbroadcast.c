@@ -293,6 +293,8 @@ typedef struct cm_rtpbcast_rtp_source {
 	cm_rtpbcast_stats stats;
 	cm_rtpbcast_mountpoint *mp;
 
+	int index;
+
 	int frame_width;
 	int frame_height;
 	int frame_x_scale;
@@ -454,11 +456,14 @@ typedef struct cm_rtp_header_vp8
 	uint32_t ssrc3:8;
 	uint32_t ssrc4:8;
 	/* RTP/VP8 header */
+	/* 0x10 key-frame */
+	/* 0x01 inter-frame */
 	uint32_t byte0:8;
 	uint32_t byte1:8;
 	uint32_t byte2:8;
 	uint32_t byte3:8;
 	/* VP8 start bytes */
+	/* 0x9d 0x01 0x2a */
 	uint32_t magic0:8;
 	uint32_t magic1:8;
 	uint32_t magic2:8;
@@ -470,16 +475,16 @@ typedef struct cm_rtp_header_vp8
 } cm_rtp_header_vp8;
 
 /* Error codes */
-#define CM_RTPBCAST_ERROR_NO_MESSAGE			450
-#define CM_RTPBCAST_ERROR_INVALID_JSON			451
-#define CM_RTPBCAST_ERROR_INVALID_REQUEST		452
-#define CM_RTPBCAST_ERROR_MISSING_ELEMENT		453
-#define CM_RTPBCAST_ERROR_INVALID_ELEMENT		454
+#define CM_RTPBCAST_ERROR_NO_MESSAGE					450
+#define CM_RTPBCAST_ERROR_INVALID_JSON				451
+#define CM_RTPBCAST_ERROR_INVALID_REQUEST			452
+#define CM_RTPBCAST_ERROR_MISSING_ELEMENT			453
+#define CM_RTPBCAST_ERROR_INVALID_ELEMENT			454
 #define CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT	455
-#define CM_RTPBCAST_ERROR_CANT_CREATE			456
-#define CM_RTPBCAST_ERROR_UNAUTHORIZED			457
-#define CM_RTPBCAST_ERROR_CANT_SWITCH			458
-#define CM_RTPBCAST_ERROR_UNKNOWN_ERROR			470
+#define CM_RTPBCAST_ERROR_CANT_CREATE					456
+#define CM_RTPBCAST_ERROR_UNAUTHORIZED				457
+#define CM_RTPBCAST_ERROR_CANT_SWITCH					458
+#define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
 
 /* Streaming watchdog/garbage collector (sort of) */
@@ -1786,7 +1791,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Done */
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switched-source", json_string("scheduled"));
+			json_object_set_new(result, "switch-source", json_string("scheduled"));
 			json_object_set_new(result, "index", json_integer(index_value));
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
@@ -1826,26 +1831,16 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 			janus_mutex_unlock(&mountpoints_mutex);
 			JANUS_LOG(LOG_VERB, "Request to switch to mountpoint/stream %s (old: %s)\n", id_value, oldmp->id);
-			session->paused = TRUE;
 
-			cm_rtpbcast_rtp_source *oldsrc = session->source;
 			cm_rtpbcast_rtp_source *newsrc = cm_rtpbcast_pick_source(mp->sources, session->remb);
+			cm_rtpbcast_schedule_switch(session, newsrc);
 
-			/* Unsubscribe from the previous mountpoint and subscribe to the new one */
-			janus_mutex_lock(&oldsrc->mutex);
-			oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
-			janus_mutex_unlock(&oldsrc->mutex);
-			/* Subscribe to the new one */
-			janus_mutex_lock(&newsrc->mutex);
-			newsrc->listeners = g_list_append(newsrc->listeners, session);
-			janus_mutex_unlock(&newsrc->mutex);
-			session->source = newsrc;
-			session->paused = FALSE;
 			/* Done */
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switched", json_string("ok"));
-			json_object_set_new(result, "id", json_string(id_value));
+			json_object_set_new(result, "switch", json_string("scheduled"));
+			json_object_set_new(result, "mountpoint-up-id", json_string(mp->id));
+			json_object_set_new(result, "mountpoint-down-id", json_string(oldmp->id));
 		} else if(!strcasecmp(request_text, "stop")) {
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
@@ -2055,6 +2050,8 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		live_rtp_source->mp = live_rtp;
 		janus_mutex_init(&live_rtp_source->stats.stat_mutex);
 		memset(&live_rtp_source->stats, 0, sizeof(live_rtp_source->stats));
+
+		live_rtp_source->index = i+1;
 
 		live_rtp_source->frame_width = 0;
 		live_rtp_source->frame_height = 0;
@@ -2869,6 +2866,24 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		janus_mutex_unlock(&oldsrc->mutex);
 
 	janus_mutex_unlock(&sessid->mutex);
+
+	json_t *event = json_object();
+	json_object_set_new(event, "streaming", json_string("event"));
+	json_t *result = json_object();
+
+	json_object_set_new(result, "switch-source", json_string("done"));
+	json_object_set_new(result, "scheduler", json_integer(1));
+	json_object_set_new(result, "id", json_string(sessid->source->mp->id));
+	json_object_set_new(result, "mountpoint-up-id", json_string(source->mp->id));
+	json_object_set_new(result, "stream-up-index", json_integer(source->index));
+	json_object_set_new(result, "mountpoint-down-id", json_string(oldsrc->mp->id));
+	json_object_set_new(result, "stream-down-index", json_integer(oldsrc->index));
+
+	json_object_set_new(event, "result", result);
+	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+	json_decref(event);
+
+	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, "random-transaction-id", event_text, NULL, NULL);
 }
 
 
