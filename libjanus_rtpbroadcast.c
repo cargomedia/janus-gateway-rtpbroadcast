@@ -2873,7 +2873,6 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	json_object_set_new(result, "switch-source", json_string("done"));
 	json_object_set_new(result, "scheduler", json_integer(1));
-	json_object_set_new(result, "id", json_string(sessid->source->mp->id));
 	json_object_set_new(result, "mountpoint-up-id", json_string(source->mp->id));
 	json_object_set_new(result, "stream-up-index", json_integer(source->index));
 	json_object_set_new(result, "mountpoint-down-id", json_string(oldsrc->mp->id));
