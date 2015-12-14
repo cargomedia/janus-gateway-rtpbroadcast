@@ -165,7 +165,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
-- `session` is set only for `list` action and reference to current connect/session.
+- `session` is set only for `list` action and reference to current connection/session.
 
 #### `list`
 It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
