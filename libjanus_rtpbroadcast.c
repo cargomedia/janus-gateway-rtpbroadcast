@@ -1617,7 +1617,6 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 
 			result = json_object();
-			json_object_set_new(result, "streaming", json_string("event"));
 
 			if(index_value) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
@@ -1677,11 +1676,8 @@ static void *cm_rtpbcast_handler(void *data) {
 
 			/* Done */
 			result = json_object();
-
 			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
       json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
-
-			json_object_set_new(result, "streaming", json_string("event"));
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
