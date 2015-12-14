@@ -206,7 +206,10 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 **Response**:
 ```json
 {
-  "status": "preparing",
+  "streaming": "event",
+  "result": {
+    "status": "preparing",
+  }
 }
 ```
 
@@ -225,14 +228,13 @@ It will switch the mountpoint for the session. By default will pick up first str
 {
   "streaming": "event",
   "result": {
-    "switch": "scheduled",
     "next": "<stream-definition>",
     "current": "<stream-definition>"
    }
 }
 ```
 
-#### `change-source`
+#### `switch-source`
 It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action). 
 The switch will be triggered when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
 If `index` is equal to `0` then `auto-switch` support will be `ON`.
@@ -249,7 +251,6 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 {
   "streaming": "event",
   "result": {
-    "switch-source": "scheduled",
     "next": "null|<stream-definition>",
     "current": "<stream-definition>",
     "autoswitch": "<boolean>"
@@ -257,7 +258,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 }
 ```
 
-`next` source definition is not available if `autoswitch` is set to `1`.
+`next` source definition is not available if `autoswitch` is set to `true`.
 
 #### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
@@ -313,7 +314,7 @@ If scheduled task is executed the subscriber receives media event:
 {
   "streaming": "event",
   "result": {
-    "changed-source": "done",
+    "event": "changed",
     "current": "<stream-definition>",
     "previous": "<stream-definition>"
   }
