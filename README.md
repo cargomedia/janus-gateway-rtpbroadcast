@@ -74,7 +74,7 @@ Synchronous actions
 -------------------
 It supports `create`, `destroy` actions and drops support for `recording` action.
 
-##### `create`
+#### `create`
 
 **Request**:
 ```json
@@ -113,7 +113,7 @@ It responses with auto generated port number for audio and video using `minport`
 }
 ```
 
-##### `destroy`
+#### `destroy`
 
 **Request**:
 
@@ -166,7 +166,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 
-##### `list`
+#### `list`
 It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
 
 **Request**:
@@ -192,7 +192,7 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 ]
 ```
 
-##### `watch`
+#### `watch`
 It will pick up first stream from the mountpoint list and assigns to the user session. 
 
 **Request**:
@@ -209,7 +209,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 }
 ```
 
-##### `switch`
+#### `switch`
 It will switch the mountpoint for the session. By default will pick up first stream from the mountpoint list. 
 
 **Request**:
@@ -231,7 +231,7 @@ It will switch the mountpoint for the session. By default will pick up first str
 }
 ```
 
-##### `change-source`
+#### `change-source`
 It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action). 
 The switch will be triggered when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
 If `index` is equal to `0` then `auto-switch` support will be `ON`.
@@ -258,7 +258,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 
 `next` source definition is not available if `autoswitch` is set to `1`.
 
-##### `stop`, `start`, `pause`
+#### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
 
 Job files
