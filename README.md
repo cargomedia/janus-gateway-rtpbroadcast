@@ -139,7 +139,7 @@ It supports `start`, `stop`, `pause`, `switch` actions like native `janus/stream
 ##### Stream definition for responses
 The response for multiple actions contains the `stream-definition` like follows:
 
-```
+```json
 {
    "id": "<string>",
    "index": "<int>",
@@ -222,7 +222,7 @@ It will switch the mountpoint for the session. By default will pick up first str
   "streaming": "event",
   "result": {
     "switch": "scheduled",
-    "next": [null|"<stream-definition>"],
+    "next": "<stream-definition>",
     "current": "<stream-definition>"
    }
 }
@@ -246,7 +246,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
   "streaming": "event",
   "result": {
     "switch-source": "scheduled",
-    "next": [null|"<stream-definition>"],
+    "next": "null|<stream-definition>",
     "current": "<stream-definition>",
     "autoswitch": "<boolean>"
   }
@@ -263,7 +263,7 @@ Job files
 It creates configurable `job-files` with plugin events. It support for `archive-finished` or `thumbnailing-finished` event.
 
 ##### `archive-finished` 
-```
+```json
 {
     "data": {
         "id": "<string>",
@@ -278,7 +278,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ##### `thumbnailing-finished`
 Thumbnailer creates archives of configurable duration for configurable interval of time. 
 
-```
+```json
 {
     "data": {
         "id": "<string>",
@@ -305,7 +305,7 @@ stream and keeps `WebRTC` session as reference. The `session` can be allocated t
 - sending the `switch` action request
 
 If scheduled task is executed the subscriber receives media event:
-```
+```json
 {
   "streaming": "event",
   "result": {
