@@ -317,6 +317,7 @@ static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_
 static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
 static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
 static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -956,26 +957,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			json_t *st = json_array();
 			guint i;
 			for (i = 0; i < mp->sources->len; i++) {
+
 				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i);
-				json_t *v = json_object();
-				json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
-				json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
 
-				json_t *s = json_object();
-				janus_mutex_lock(&src->stats.stat_mutex);
-				json_object_set_new(s, "min", json_real(src->stats.min));
-				json_object_set_new(s, "max", json_real(src->stats.max));
-				json_object_set_new(s, "cur", json_real(src->stats.cur));
-				json_object_set_new(s, "avg", json_real(src->stats.avg));
-				janus_mutex_unlock(&src->stats.stat_mutex);
-				json_object_set_new(v, "stats", s);
-
-				json_t *f = json_object();
-				json_object_set_new(f, "width", json_integer(src->frame_width));
-				json_object_set_new(f, "height", json_integer(src->frame_height));
-				json_object_set_new(f, "fps", json_integer(src->frame_rate));
-				json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
-				json_object_set_new(v, "frame", f);
+				json_t *v = cm_rtpbcast_source_to_json(src);
 
 				json_t *u = json_object();
 				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
@@ -1221,7 +1206,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
-			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
+			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "change-source")) {
 		/* These messages are handled asynchronously */
 		cm_rtpbcast_message *msg = g_malloc0(sizeof(cm_rtpbcast_message));
 		if(msg == NULL) {
@@ -1536,7 +1521,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				"v=0\r\no=%s %"SCNu64" %"SCNu64" IN IP4 127.0.0.1\r\n",
 					"-", sessid, version);
 			g_strlcat(sdptemp, buffer, 2048);
-			g_strlcat(sdptemp, "s=CM RTP Broadcast Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
+			g_strlcat(sdptemp, "s=CM RTP Broadcast\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
 			cm_rtpbcast_codecs codecs = src->codecs;
 
 			size_t j;
@@ -1602,7 +1587,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			session->paused = TRUE;
 			result = json_object();
 			json_object_set_new(result, "status", json_string("pausing"));
-		} else if(!strcasecmp(request_text, "switch-source")) {
+		} else if(!strcasecmp(request_text, "change-source")) {
 			/* This listener wants to switch to a different source of current mountpoint */
 			cm_rtpbcast_mountpoint *mp = session->source->mp;
 			if(mp == NULL) {
@@ -1632,18 +1617,25 @@ static void *cm_rtpbcast_handler(void *data) {
 				goto error;
 			}
 
+			result = json_object();
+
 			if(index_value) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
+
+      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+				json_object_set_new(result, "next", nextsrc);
+
 				session->autoswitch = FALSE;
 			} else {
 				session->autoswitch = TRUE;
 			}
 			/* Done */
-			result = json_object();
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switch-source", json_string("scheduled"));
-			json_object_set_new(result, "index", json_integer(index_value));
+			json_object_set_new(result, "event", json_string("scheduled"));
+			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
 			/* This listener wants to switch to a different mountpoint
@@ -1688,10 +1680,14 @@ static void *cm_rtpbcast_handler(void *data) {
 
 			/* Done */
 			result = json_object();
+
+			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switch", json_string("scheduled"));
-			json_object_set_new(result, "mountpoint-up-id", json_string(mp->id));
-			json_object_set_new(result, "mountpoint-down-id", json_string(oldmp->id));
+			json_object_set_new(result, "event", json_string("scheduled"));
+			json_object_set_new(result, "next", nextsrc);
+			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
@@ -2722,12 +2718,13 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	json_object_set_new(event, "streaming", json_string("event"));
 	json_t *result = json_object();
 
-	json_object_set_new(result, "switch-source", json_string("done"));
-	json_object_set_new(result, "scheduler", json_integer(1));
-	json_object_set_new(result, "mountpoint-up-id", json_string(source->mp->id));
-	json_object_set_new(result, "stream-up-index", json_integer(source->index));
-	json_object_set_new(result, "mountpoint-down-id", json_string(oldsrc->mp->id));
-	json_object_set_new(result, "stream-down-index", json_integer(oldsrc->index));
+	json_object_set_new(result, "event", json_string("changed-source"));
+
+	json_t *currentsrc = cm_rtpbcast_source_to_json(source);
+	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc);
+
+	json_object_set_new(result, "current", currentsrc);
+	json_object_set_new(result, "previous", previoussrc);
 
 	json_object_set_new(event, "result", result);
 	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
@@ -2747,4 +2744,32 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 		src->waiters = NULL;
 		janus_mutex_unlock(&src->mutex);
 	}
+}
+
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src) {
+		json_t *v = json_object();
+
+		json_object_set_new(v, "id", json_string(src->mp->id));
+		json_object_set_new(v, "index", json_integer(src->index));
+
+		json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
+		json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
+
+		json_t *s = json_object();
+		janus_mutex_lock(&src->stats.stat_mutex);
+		json_object_set_new(s, "min", json_real(src->stats.min));
+		json_object_set_new(s, "max", json_real(src->stats.max));
+		json_object_set_new(s, "cur", json_real(src->stats.cur));
+		json_object_set_new(s, "avg", json_real(src->stats.avg));
+		janus_mutex_unlock(&src->stats.stat_mutex);
+		json_object_set_new(v, "stats", s);
+
+		json_t *f = json_object();
+		json_object_set_new(f, "width", json_integer(src->frame_width));
+		json_object_set_new(f, "height", json_integer(src->frame_height));
+		json_object_set_new(f, "fps", json_integer(src->frame_rate));
+		json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
+		json_object_set_new(v, "frame", f);
+
+		return v;
 }
