@@ -961,12 +961,11 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i);
 
 				json_t *v = cm_rtpbcast_source_to_json(src);
+				json_array_append_new(st, v);
 
 				json_t *u = json_object();
 				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
 				json_object_set_new(v, "session", u);
-
-				json_array_append_new(st, v);
 			}
 			json_object_set_new(ml, "streams", st);
 			/* TODO: @landswellsong do we need to list anything else here? */
@@ -1618,6 +1617,8 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 
 			result = json_object();
+			json_object_set_new(result, "streaming", json_string("event"));
+			json_object_set_new(result, "event", json_string("scheduled"));
 
 			if(index_value) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
@@ -1632,9 +1633,6 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 			/* Done */
 			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
-
-			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "event", json_string("scheduled"));
 			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
