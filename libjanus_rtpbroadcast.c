@@ -1205,7 +1205,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
-			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "change-source")) {
+			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
 		/* These messages are handled asynchronously */
 		cm_rtpbcast_message *msg = g_malloc0(sizeof(cm_rtpbcast_message));
 		if(msg == NULL) {
@@ -1586,7 +1586,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			session->paused = TRUE;
 			result = json_object();
 			json_object_set_new(result, "status", json_string("pausing"));
-		} else if(!strcasecmp(request_text, "change-source")) {
+		} else if(!strcasecmp(request_text, "switch-source")) {
 			/* This listener wants to switch to a different source of current mountpoint */
 			cm_rtpbcast_mountpoint *mp = session->source->mp;
 			if(mp == NULL) {
@@ -1618,7 +1618,6 @@ static void *cm_rtpbcast_handler(void *data) {
 
 			result = json_object();
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "event", json_string("scheduled"));
 
 			if(index_value) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
@@ -1683,7 +1682,6 @@ static void *cm_rtpbcast_handler(void *data) {
       json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
 
 			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "event", json_string("scheduled"));
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
@@ -2716,7 +2714,7 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	json_object_set_new(event, "streaming", json_string("event"));
 	json_t *result = json_object();
 
-	json_object_set_new(result, "event", json_string("changed-source"));
+	json_object_set_new(result, "event", json_string("changed"));
 
 	json_t *currentsrc = cm_rtpbcast_source_to_json(source);
 	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc);
