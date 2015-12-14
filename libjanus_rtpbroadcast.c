@@ -2722,7 +2722,7 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
 	json_decref(event);
 
-	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, "random-transaction-id", event_text, NULL, NULL);
+	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
 }
 
 
