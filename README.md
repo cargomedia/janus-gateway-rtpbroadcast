@@ -136,6 +136,33 @@ Asychronous actions
 It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes 
 `watch` action and introduces new `switch-source` action.
 
+##### Stream definition for responses
+The response for multiple actions contains the `stream-definition` like follows:
+
+```
+{
+   "id": "<string>",
+   "index": "<int>",
+   "audioport": "<int>",
+   "videoport": "<int>",
+   "stats": {
+      "min": "<float>",
+      "max": "<float>",
+      "cur": "<float>",
+      "avg": "<float>"
+   },
+   "frame": {
+      "width": "<int>",
+      "height": "<int>",
+      "fps": "<int>",
+      "key-distance": "<int>"
+   },
+   "session": {
+      "webrtc-active": "<boolean>"
+   }
+}
+```
+
 ##### `list`
 It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
 
@@ -154,25 +181,9 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
      "name": "<string>",
      "description": "<string>",
      "streams": [
-        {
-           "audioport": "<int>",
-           "videoport": "<int>",
-           "stats": {
-              "min": "<float>",
-              "max": "<float>",
-              "cur": "<float>",
-              "avg": "<float>"
-           },
-           "frame": {
-              "width": "<int>",
-              "height": "<int>",
-              "fps": "<int>",
-              "key-distance": "<int>"
-           },
-           "session": {
-              "webrtc-active": "<boolean>"
-           }
-        }
+        "<stream-definition-1>",
+        "<stream-definition-2>",
+        "<stream-definition-N>"
      ]
   }
 ]
@@ -209,13 +220,15 @@ It will switch the mountpoint for the session. By default will pick up first str
 ```json
 {
   "streaming": "event",
-  "switch": "scheduled",
-  "mountpoint-up-id": "<string>",
-  "mountpoint-down-id": "<string>",
+  "result": {
+    "switch": "scheduled",
+    "next": [null|"<stream-definition>"],
+    "current": "<stream-definition>"
+   }
 }
 ```
 
-##### `switch-source`
+##### `change-source`
 It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action). 
 The switch will be triggered when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
 If `index` is equal to `0` then `auto-switch` support will be `ON`.
@@ -223,7 +236,6 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 **Request**:
 ```json
 {
-  "id": "<string>",
   "index": "<integer>"
 }
 ```
@@ -232,11 +244,16 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 ```json
 {
   "streaming": "event",
-  "switch-source": "scheduled",
-  "index": "<string>",
-  "autoswitch": "<boolean>"
+  "result": {
+    "switch-source": "scheduled",
+    "next": [null|"<stream-definition>"],
+    "current": "<stream-definition>",
+    "autoswitch": "<boolean>"
+  }
 }
 ```
+
+`next` source definition is not available if `autoswitch` is set to `1`.
 
 ##### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
@@ -292,12 +309,9 @@ If scheduled task is executed the subscriber receives media event:
 {
   "streaming": "event",
   "result": {
-    "switch-source": "done",
-    "scheduler": 1,
-    "mountpoint-up-id": "2",
-    "stream-up-index": 3,
-    "mountpoint-down-id": "2",
-    "stream-down-index": 1
+    "changed-source": "done",
+    "current": "<stream-definition>",
+    "previous": "<stream-definition>"
   }
 }
 ```
