@@ -293,10 +293,31 @@ typedef struct cm_rtpbcast_rtp_source {
 	cm_rtpbcast_stats stats;
 	cm_rtpbcast_mountpoint *mp;
 
+	int index;
+
+	int frame_width;
+	int frame_height;
+	int frame_x_scale;
+	int frame_y_scale;
+	int frame_mbw;
+	int frame_mbh;
+
+	int frame_count;
+	int frame_last_count;
+	guint64 frame_last_usec;
+	int frame_rate;
+	int frame_key_last;
+	int frame_key_distance;
+
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
+	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
+static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
+static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
+static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -373,6 +394,7 @@ typedef struct cm_rtpbcast_context {
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
+	cm_rtpbcast_rtp_source *nextsource; /* Source to switch after a keyframe */
 
 	/* REMB and auxillary vars for math */
 	guint64 remb;
@@ -389,6 +411,8 @@ typedef struct cm_rtpbcast_session {
 	gboolean stopping;
 	volatile gint hangingup;
 	gint64 destroyed;	/* Time at which this session was marked as destroyed */
+
+	janus_mutex mutex;
 } cm_rtpbcast_session;
 static GHashTable *sessions;
 static GList *old_sessions;
@@ -404,18 +428,64 @@ typedef struct cm_rtpbcast_rtp_relay_packet {
 	uint16_t seq_number;
 } cm_rtpbcast_rtp_relay_packet;
 
+typedef struct cm_rtp_header_vp8
+{
+	/* RTP header */
+#if __BYTE_ORDER == __BIG_ENDIAN
+	uint16_t version:2;
+	uint16_t padding:1;
+	uint16_t extension:1;
+	uint16_t csrccount:4;
+	uint16_t markerbit:1;
+	uint16_t type:7;
+#elif __BYTE_ORDER == __LITTLE_ENDIAN
+	uint16_t csrccount:4;
+	uint16_t extension:1;
+	uint16_t padding:1;
+	uint16_t version:2;
+	uint16_t type:7;
+	uint16_t markerbit:1;
+#endif
+	uint16_t seq_number1:8;
+	uint16_t seq_number2:8;
+	uint32_t timestamp1:8;
+	uint32_t timestamp2:8;
+	uint32_t timestamp3:8;
+	uint32_t timestamp4:8;
+	uint32_t ssrc1:8;
+	uint32_t ssrc2:8;
+	uint32_t ssrc3:8;
+	uint32_t ssrc4:8;
+	/* RTP/VP8 header */
+	/* 0x10 key-frame */
+	/* 0x01 inter-frame */
+	uint32_t byte0:8;
+	uint32_t byte1:8;
+	uint32_t byte2:8;
+	uint32_t byte3:8;
+	/* VP8 start bytes */
+	/* 0x9d 0x01 0x2a */
+	uint32_t magic0:8;
+	uint32_t magic1:8;
+	uint32_t magic2:8;
+	/* VP8 width, height, scale-x, scale-y */
+	uint32_t width0:8;
+	uint32_t width1:8;
+	uint32_t height0:8;
+	uint32_t height1:8;
+} cm_rtp_header_vp8;
 
 /* Error codes */
-#define CM_RTPBCAST_ERROR_NO_MESSAGE			450
-#define CM_RTPBCAST_ERROR_INVALID_JSON			451
-#define CM_RTPBCAST_ERROR_INVALID_REQUEST		452
-#define CM_RTPBCAST_ERROR_MISSING_ELEMENT		453
-#define CM_RTPBCAST_ERROR_INVALID_ELEMENT		454
+#define CM_RTPBCAST_ERROR_NO_MESSAGE					450
+#define CM_RTPBCAST_ERROR_INVALID_JSON				451
+#define CM_RTPBCAST_ERROR_INVALID_REQUEST			452
+#define CM_RTPBCAST_ERROR_MISSING_ELEMENT			453
+#define CM_RTPBCAST_ERROR_INVALID_ELEMENT			454
 #define CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT	455
-#define CM_RTPBCAST_ERROR_CANT_CREATE			456
-#define CM_RTPBCAST_ERROR_UNAUTHORIZED			457
-#define CM_RTPBCAST_ERROR_CANT_SWITCH			458
-#define CM_RTPBCAST_ERROR_UNKNOWN_ERROR			470
+#define CM_RTPBCAST_ERROR_CANT_CREATE					456
+#define CM_RTPBCAST_ERROR_UNAUTHORIZED				457
+#define CM_RTPBCAST_ERROR_CANT_SWITCH					458
+#define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
 
 /* Streaming watchdog/garbage collector (sort of) */
@@ -715,6 +785,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	}
 	session->handle = handle;
 	session->source = NULL;	/* This will happen later */
+	session->nextsource = NULL;
 	session->started = FALSE;	/* This will happen later */
 	session->paused = FALSE;
 	session->destroyed = 0;
@@ -722,6 +793,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 	session->autoswitch = TRUE;
+	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
 	handle->plugin_handle = session;
@@ -885,22 +957,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			json_t *st = json_array();
 			guint i;
 			for (i = 0; i < mp->sources->len; i++) {
+
 				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i);
-				json_t *v = json_object();
-				json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
-				json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
 
-				json_t *s = json_object();
-				janus_mutex_lock(&src->stats.stat_mutex);
-				json_object_set_new(s, "min", json_real(src->stats.min));
-				json_object_set_new(s, "max", json_real(src->stats.max));
-				json_object_set_new(s, "cur", json_real(src->stats.cur));
-				json_object_set_new(s, "avg", json_real(src->stats.avg));
-				janus_mutex_unlock(&src->stats.stat_mutex);
-
-				json_object_set_new(v, "stats", s);
-
+				json_t *v = cm_rtpbcast_source_to_json(src);
 				json_array_append_new(st, v);
+
+				json_t *u = json_object();
+				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
+				json_object_set_new(v, "session", u);
 			}
 			json_object_set_new(ml, "streams", st);
 			/* TODO: @landswellsong do we need to list anything else here? */
@@ -1138,155 +1203,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
 		goto plugin_response;
-	} else if(!strcasecmp(request_text, "recording")) {
-		#if 0
-		/* We can start/stop recording a live, RTP-based stream */
-		json_t *action = json_object_get(root, "action");
-		if(!action) {
-			JANUS_LOG(LOG_ERR, "Missing element (action)\n");
-			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
-			g_snprintf(error_cause, 512, "Missing element (action)");
-			goto error;
-		}
-		if(!json_is_string(action)) {
-			JANUS_LOG(LOG_ERR, "Invalid element (action should be a string)\n");
-			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (action should be a string)");
-			goto error;
-		}
-		const char *action_text = json_string_value(action);
-		if(strcasecmp(action_text, "start") && strcasecmp(action_text, "stop")) {
-			JANUS_LOG(LOG_ERR, "Invalid action (should be start|stop)\n");
-			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid action (should be start|stop)");
-			goto error;
-		}
-		json_t *id = json_object_get(root, "id");
-		if(!id) {
-			JANUS_LOG(LOG_ERR, "Missing element (id)\n");
-			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
-			g_snprintf(error_cause, 512, "Missing element (id)");
-			goto error;
-		}
-		if(!json_is_string(id)) {
-			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
-			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-			g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
-			goto error;
-		}
-		char *id_value = json_string_value(id);
-		janus_mutex_lock(&mountpoints_mutex);
-		cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
-		if(mp == NULL) {
-			janus_mutex_unlock(&mountpoints_mutex);
-			JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
-			error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
-			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
-			goto error;
-		}
-		if(!strcasecmp(action_text, "start")) {
-			/* Start a recording for audio and/or video */
-			json_t *audio = json_object_get(root, "audio");
-			if(audio && !json_is_string(audio)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (audio should be a string)\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid value (audio should be a string)");
-				goto error;
-			}
-			json_t *video = json_object_get(root, "video");
-			if(video && !json_is_string(video)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (video should be a string)\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid value (video should be a string)");
-				goto error;
-			}
-			if((audio && mp->source->arc) || (video && mp->source->vrc)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Recording for audio and/or video already started for this stream\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_REQUEST;
-				g_snprintf(error_cause, 512, "Recording for audio and/or video already started for this stream");
-				goto error;
-			}
-			if(!audio && !video) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Missing audio and/or video\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_REQUEST;
-				g_snprintf(error_cause, 512, "Missing audio and/or video");
-				goto error;
-			}
-			if(audio) {
-				const char *audiofile = json_string_value(audio);
-				mp->source->arc = janus_recorder_create(NULL, 0, (char *)audiofile);
-				if(mp->source->arc == NULL) {
-					JANUS_LOG(LOG_ERR, "Error starting recorder for audio\n");
-				} else {
-					JANUS_LOG(LOG_INFO, "[%s] Audio recording started\n", mp->name);
-				}
-			}
-			if(video) {
-				const char *videofile = json_string_value(video);
-				mp->source->vrc = janus_recorder_create(NULL, 1, (char *)videofile);
-				if(mp->source->vrc == NULL) {
-					JANUS_LOG(LOG_ERR, "Error starting recorder for video\n");
-				} else {
-					JANUS_LOG(LOG_INFO, "[%s] Video recording started\n", mp->name);
-				}
-			}
-			janus_mutex_unlock(&mountpoints_mutex);
-			/* Send a success response back */
-			response = json_object();
-			json_object_set_new(response, "streaming", json_string("ok"));
-			goto plugin_response;
-		} else if(!strcasecmp(action_text, "stop")) {
-			/* Stop the recording */
-			json_t *audio = json_object_get(root, "audio");
-			if(audio && !json_is_boolean(audio)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (audio should be a boolean)\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid value (audio should be a boolean)");
-				goto error;
-			}
-			json_t *video = json_object_get(root, "video");
-			if(video && !json_is_boolean(video)) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Invalid element (video should be a boolean)\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
-				g_snprintf(error_cause, 512, "Invalid value (video should be a boolean)");
-				goto error;
-			}
-			if(!audio && !video) {
-				janus_mutex_unlock(&mountpoints_mutex);
-				JANUS_LOG(LOG_ERR, "Missing audio and/or video\n");
-				error_code = CM_RTPBCAST_ERROR_INVALID_REQUEST;
-				g_snprintf(error_cause, 512, "Missing audio and/or video");
-				goto error;
-			}
-			if(audio && json_is_true(audio) && mp->source->arc) {
-				/* Close the audio recording */
-				janus_recorder_close(mp->source->arc);
-				JANUS_LOG(LOG_INFO, "[%s] Closed audio recording %s\n", mp->name, mp->source->arc->filename ? mp->source->arc->filename : "??");
-				janus_recorder *tmp = mp->source->arc;
-				mp->source->arc = NULL;
-				janus_recorder_free(tmp);
-			}
-			if(video && json_is_true(video) && mp->source->vrc) {
-				/* Close the video recording */
-				janus_recorder_close(mp->source->vrc);
-				JANUS_LOG(LOG_INFO, "[%s] Closed video recording %s\n", mp->name, mp->source->vrc->filename ? mp->source->vrc->filename : "??");
-				janus_recorder *tmp = mp->source->vrc;
-				mp->source->vrc = NULL;
-				janus_recorder_free(tmp);
-			}
-			janus_mutex_unlock(&mountpoints_mutex);
-			/* Send a success response back */
-			response = json_object();
-			json_object_set_new(response, "streaming", json_string("ok"));
-			goto plugin_response;
-		}
-		#endif // record
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
@@ -1457,6 +1373,8 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 			if (sessid->source->mp->sources == NULL)
 				return;
 
+			janus_mutex_lock(&mountpoints_mutex);
+
 			janus_mutex_lock(&sessid->source->mutex);
 			cm_rtpbcast_rtp_source *src =
 				cm_rtpbcast_pick_source(sessid->source->mp->sources, sessid->remb);
@@ -1464,20 +1382,13 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 			/* Check if we really need to switch */
 			if (src && src != sessid->source) {
-				sessid->autoswitch = FALSE;
-
-				janus_mutex_lock(&sessid->source->mutex);
-				sessid->source->listeners = g_list_remove_all(sessid->source->listeners, sessid);
-				sessid->source = src;
-				janus_mutex_unlock(&sessid->source->mutex);
-
-				janus_mutex_lock(&src->mutex);
-				src->listeners = g_list_append(src->listeners, sessid);
-				janus_mutex_unlock(&src->mutex);
+				cm_rtpbcast_schedule_switch(sessid, src);
 
 				sessid->last_switch = ml;
 				sessid->autoswitch = TRUE;
 			}
+
+			janus_mutex_unlock(&mountpoints_mutex);
 		}
 	}
 	/* FIXME Maybe we should care about RTCP, but not now */
@@ -1609,7 +1520,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				"v=0\r\no=%s %"SCNu64" %"SCNu64" IN IP4 127.0.0.1\r\n",
 					"-", sessid, version);
 			g_strlcat(sdptemp, buffer, 2048);
-			g_strlcat(sdptemp, "s=CM RTP Broadcast Test\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
+			g_strlcat(sdptemp, "s=CM RTP Broadcast\r\nt=0 0\r\n", 2048); /* FIXME @landswellsong: maybe some sane name here? */
 			cm_rtpbcast_codecs codecs = src->codecs;
 
 			size_t j;
@@ -1705,29 +1616,22 @@ static void *cm_rtpbcast_handler(void *data) {
 				goto error;
 			}
 
+			result = json_object();
+
 			if(index_value) {
-				session->paused = TRUE;
-				cm_rtpbcast_rtp_source *oldsrc = session->source;
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
-				/* Unsubscribe from the previous mountpoint and subscribe to the new one */
-				janus_mutex_lock(&oldsrc->mutex);
-				oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
-				janus_mutex_unlock(&oldsrc->mutex);
-				/* Subscribe to the new one */
-				janus_mutex_lock(&newsrc->mutex);
-				newsrc->listeners = g_list_append(newsrc->listeners, session);
-				janus_mutex_unlock(&newsrc->mutex);
-				session->source = newsrc;
-				session->paused = FALSE;
+				cm_rtpbcast_schedule_switch(session, newsrc);
+
+      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+				json_object_set_new(result, "next", nextsrc);
+
 				session->autoswitch = FALSE;
 			} else {
 				session->autoswitch = TRUE;
 			}
 			/* Done */
-			result = json_object();
-			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switched-source", json_string("ok"));
-			json_object_set_new(result, "index", json_integer(index_value));
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
 			/* This listener wants to switch to a different mountpoint
@@ -1766,26 +1670,16 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 			janus_mutex_unlock(&mountpoints_mutex);
 			JANUS_LOG(LOG_VERB, "Request to switch to mountpoint/stream %s (old: %s)\n", id_value, oldmp->id);
-			session->paused = TRUE;
 
-			cm_rtpbcast_rtp_source *oldsrc = session->source;
 			cm_rtpbcast_rtp_source *newsrc = cm_rtpbcast_pick_source(mp->sources, session->remb);
+			cm_rtpbcast_schedule_switch(session, newsrc);
 
-			/* Unsubscribe from the previous mountpoint and subscribe to the new one */
-			janus_mutex_lock(&oldsrc->mutex);
-			oldsrc->listeners = g_list_remove_all(oldsrc->listeners, session);
-			janus_mutex_unlock(&oldsrc->mutex);
-			/* Subscribe to the new one */
-			janus_mutex_lock(&newsrc->mutex);
-			newsrc->listeners = g_list_append(newsrc->listeners, session);
-			janus_mutex_unlock(&newsrc->mutex);
-			session->source = newsrc;
-			session->paused = FALSE;
 			/* Done */
 			result = json_object();
-			json_object_set_new(result, "streaming", json_string("event"));
-			json_object_set_new(result, "switched", json_string("ok"));
-			json_object_set_new(result, "id", json_string(id_value));
+			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_object_set_new(result, "next", nextsrc);
+			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
 			if(session->stopping || !session->started) {
 				/* Been there, done that: ignore */
@@ -1921,6 +1815,7 @@ static void cm_rtpbcast_rtp_source_free(gpointer src) {
 
 	janus_mutex_lock(&source->mutex);
 	g_list_free(source->listeners);
+	g_list_free(source->waiters);
 	janus_mutex_unlock(&source->mutex);
 
 	g_free(source);
@@ -1995,7 +1890,26 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		janus_mutex_init(&live_rtp_source->stats.stat_mutex);
 		memset(&live_rtp_source->stats, 0, sizeof(live_rtp_source->stats));
 
+		live_rtp_source->index = i+1;
+
+		live_rtp_source->frame_width = 0;
+		live_rtp_source->frame_height = 0;
+		live_rtp_source->frame_x_scale = 0;
+		live_rtp_source->frame_y_scale = 0;
+		live_rtp_source->frame_mbw = 0;
+		live_rtp_source->frame_mbh = 0;
+
+		live_rtp_source->frame_count = 0;
+		live_rtp_source->frame_last_count = 0;
+		live_rtp_source->frame_last_usec = 0;
+
+		live_rtp_source->frame_rate = 0;
+
+		live_rtp_source->frame_key_last = 0;
+		live_rtp_source->frame_key_distance = 0;
+
 		live_rtp_source->listeners = NULL;
+		live_rtp_source->waiters = NULL;
 		janus_mutex_init(&live_rtp_source->mutex);
 
 		for (j = AUDIO; j <= VIDEO; j++) {
@@ -2203,6 +2117,79 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 				packet.timestamp = ntohl(packet.data->timestamp);
 				packet.seq_number = ntohs(packet.data->seq_number);
+
+				/* Detect if the packet is the begnning of a key frame
+				 * Code is verbose on purpose for readability, compiler will optimise
+				 * Refer to https://tools.ietf.org/html/draft-ietf-payload-vp8-17 */
+				/* TODO: @landswellsong assuming VP8 codec only */
+				if (j == VIDEO) {
+					/* CC count */
+					guint8 cc = buffer[0] & 0x0F;
+
+					/* Start of VP8 payload descriptor */
+					guint8 vp8_pd = 4 * 3 + cc * 4;
+
+					/* Flags */
+					guint8 flags = buffer[vp8_pd];
+
+					/* VP8 header */
+					guint8 vp8_hd = vp8_pd + 1;
+
+					/* Optional headers */
+					if (flags & 0x80) { /* 'X' flag */
+						vp8_hd++;
+						guint8 xflags = buffer[vp8_pd + 1];
+
+						if (xflags & 0x80) { /* 'I' flag */
+							vp8_hd++;
+							if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
+								vp8_hd++;
+						}
+						if (xflags & 0x60) /* 'L' flag */
+							vp8_hd++;
+						if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
+							vp8_hd++;
+					}
+
+					/* If this is a key frame and the first packet of the frame
+					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
+					cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+
+					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
+						/* Check VP8 start code bytes */
+						if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
+							JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
+						} else {
+							/* Calculate frame parameters */
+							source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
+							source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
+							source->frame_x_scale = rtp_vp8h->width1 >> 6;
+							source->frame_y_scale = rtp_vp8h->height1 >> 6;
+							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
+							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
+							/* Calculate key frame distance in the stream */
+							source->frame_key_distance = source->frame_count - source->frame_key_last;
+							source->frame_key_last = source->frame_count;
+
+							JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
+							cm_rtpbcast_process_switchers(source);
+						}
+					}
+
+					/* Detect if frame is an inter-frame for VP8 */
+					if (rtp_vp8h->byte0 & 0x01) {
+						guint64 ml = janus_get_monotonic_time();
+						/* Calculate frame rate (FPS) in the stream */
+						if (ml - source->frame_last_usec >= STAT_SECOND) {
+							source->frame_rate = source->frame_count - source->frame_last_count;
+							source->frame_last_count = source->frame_count;
+							/* Keep timestamp for last FPS update */
+							source->frame_last_usec = ml;
+						}
+						source->frame_count++;
+					}
+				}
+
 				/* Go! */
 				janus_mutex_lock(&source->mutex);
 				g_list_foreach(source->listeners, cm_rtpbcast_relay_rtp_packet, &packet);
@@ -2656,4 +2643,125 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 		/* Cleaning up and removing the mountpoint is done in a lazy way */
 		old_mountpoints = g_list_append(old_mountpoints, mp);
 	}
+}
+
+void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc) {
+	JANUS_LOG(LOG_VERB, "Scheduling session 0x%x to switch to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(newsrc));
+	cm_rtpbcast_rtp_source *ns = sessid->nextsource;
+	if (ns == newsrc)
+		return; /* Nothing to do */
+
+	janus_mutex_lock(&sessid->mutex);
+	/* Clearing old switching source if any */
+	if (ns) {
+		janus_mutex_lock(&ns->mutex);
+		ns->waiters = g_list_remove_all(ns->waiters, sessid);
+		sessid->nextsource = NULL;
+		janus_mutex_unlock(&ns->mutex);
+	}
+
+	/* Attaching to a new source */
+	sessid->nextsource = newsrc;
+	janus_mutex_lock(&newsrc->mutex);
+	newsrc->waiters = g_list_prepend(newsrc->waiters, sessid);
+	janus_mutex_unlock(&newsrc->mutex);
+
+	janus_mutex_unlock(&sessid->mutex);
+}
+
+void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid) {
+	JANUS_LOG(LOG_VERB, "Unscheduling session 0x%x from switching\n", GPOINTER_TO_UINT(sessid));
+	cm_rtpbcast_rtp_source *ns = sessid->nextsource;
+	if (ns) {
+		janus_mutex_lock(&ns->mutex);
+		janus_mutex_lock(&sessid->mutex);
+
+		ns->waiters = g_list_remove_all(ns->waiters, sessid);
+		sessid->nextsource = NULL;
+
+		janus_mutex_unlock(&sessid->mutex);
+		janus_mutex_unlock(&ns->mutex);
+	}
+}
+
+static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
+	cm_rtpbcast_session *sessid = (cm_rtpbcast_session *)data;
+	cm_rtpbcast_rtp_source *source = (cm_rtpbcast_rtp_source *)user_data;
+	cm_rtpbcast_rtp_source *oldsrc = sessid->source;
+
+	janus_mutex_lock(&sessid->mutex);
+
+	/* If somehow the sources are the same, prevent a deadlock */
+	if (source != oldsrc)
+		janus_mutex_lock(&oldsrc->mutex);
+
+  /* Remove from old source and attach to new source */
+	oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
+	source->listeners = g_list_prepend(source->listeners, sessid);
+	sessid->source = source;
+	JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
+
+	if (source != oldsrc)
+		janus_mutex_unlock(&oldsrc->mutex);
+
+	janus_mutex_unlock(&sessid->mutex);
+
+	json_t *event = json_object();
+	json_object_set_new(event, "streaming", json_string("event"));
+	json_t *result = json_object();
+
+	json_object_set_new(result, "event", json_string("changed"));
+
+	json_t *currentsrc = cm_rtpbcast_source_to_json(source);
+	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc);
+
+	json_object_set_new(result, "current", currentsrc);
+	json_object_set_new(result, "previous", previoussrc);
+
+	json_object_set_new(event, "result", result);
+	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+	json_decref(event);
+
+	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+}
+
+
+void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
+	if (src->waiters) {
+		janus_mutex_lock(&src->mutex);
+		/* Switch everybody */
+		g_list_foreach(src->waiters, cm_rtpbcast_execute_switching, src);
+		/* Kill everybody */
+		g_list_free(src->waiters);
+		src->waiters = NULL;
+		janus_mutex_unlock(&src->mutex);
+	}
+}
+
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src) {
+		json_t *v = json_object();
+
+		json_object_set_new(v, "id", json_string(src->mp->id));
+		json_object_set_new(v, "index", json_integer(src->index));
+
+		json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
+		json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
+
+		json_t *s = json_object();
+		janus_mutex_lock(&src->stats.stat_mutex);
+		json_object_set_new(s, "min", json_real(src->stats.min));
+		json_object_set_new(s, "max", json_real(src->stats.max));
+		json_object_set_new(s, "cur", json_real(src->stats.cur));
+		json_object_set_new(s, "avg", json_real(src->stats.avg));
+		janus_mutex_unlock(&src->stats.stat_mutex);
+		json_object_set_new(v, "stats", s);
+
+		json_t *f = json_object();
+		json_object_set_new(f, "width", json_integer(src->frame_width));
+		json_object_set_new(f, "height", json_integer(src->frame_height));
+		json_object_set_new(f, "fps", json_integer(src->frame_rate));
+		json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
+		json_object_set_new(v, "frame", f);
+
+		return v;
 }

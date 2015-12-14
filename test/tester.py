@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -i
 # -*- coding: utf-8 -*-
 
-import requests, json, subprocess
+import requests, json, subprocess, time
 
 janus_url = "http://localhost:8088/janus"
 mountpoint_id = "Ababagalamaga"
@@ -34,10 +34,16 @@ def greet():
     janus_cmd({ "janus": "create",
                 "transaction": "tester.py"}, action = helper)
 
-def keepalive():
+# If delay != 0, sends keepalives every second over delay seconds
+def keepalive(delay = 0):
     janus_cmd({ "janus": "keepalive",
                 "transaction": "tester.py",
                 "session_id": session_id }, not session_id)
+    if delay > 0:
+        for i in range(0,delay):
+            time.sleep(1)
+            keepalive()
+
 
 def attach(plugin = "janus.plugin.cm.rtpbroadcast"):
     def helper(j):
@@ -109,8 +115,12 @@ videorate_min = 20000
 videorate_max = 156000
 audiorate_min = 6000
 audiorate_max = 20000
+
+# Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
+keyframedist = 120
+
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
     global streamer
@@ -120,8 +130,8 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
         print("Streamer already active!")
     else:
         for i in range(0,nstreams):
-            arate = int(amin+i*(amax-amin)/(nstreams-1))
-            vrate = int(vmin+i*(vmax-vmin)/(nstreams-1))
+            arate = int(amin+(nstreams-i-1)*(amax-amin)/(nstreams-1))
+            vrate = int(vmin+(nstreams-i-1)*(vmax-vmin)/(nstreams-1))
             args+="  audiotestsrc !  "
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "
@@ -130,7 +140,7 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
-            args+="    vp8enc error-resilient=true target-bitrate=" + str(vrate) + " ! "
+            args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
             args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
