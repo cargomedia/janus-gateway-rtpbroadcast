@@ -9,6 +9,7 @@ Overview
 This plugin is based on native `janus` streaming plugin. It drops support for `LIVE`, `RTSP`, `VOD` and extends support for `RTP` streaming.
  
 Main extensions:
+- renames plugin with `janus.plugin.cm.rtpbroadcast`
 - changes type of mountpoint `id` from `integer` to `string`
 - allows to create multiple streams (sources) per mountpoint
 - tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
@@ -327,6 +328,11 @@ This plugin can be directly managed by [`janus-gateway-ruby`](https://github.com
 [mountpoint](https://github.com/cargomedia/janus-gateway-ruby#plugins) resource.
  
 Additionally the `ACL` for publishers and subscribers, `job-file` handling can be directly managed by [cm-janus](https://github.com/cargomedia/cm-janus)
+
+Testing
+-------
+There is a simple testing script placed in the `test/tester.py` which allow for triggering basic actions on the plugin. Please find the 
+[test/README](test/README.md) for more details.
 
 Building
 --------
