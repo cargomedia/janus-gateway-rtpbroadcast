@@ -2134,49 +2134,9 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					/* VP8 header */
 					guint8 vp8_hd = vp8_pd + 1;
 
-					/* Optional headers */
-					if (flags & 0x80) { /* 'X' flag */
-						vp8_hd++;
-						guint8 xflags = buffer[vp8_pd + 1];
-
-						if (xflags & 0x80) { /* 'I' flag */
-							vp8_hd++;
-							if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
-								vp8_hd++;
-						}
-						if (xflags & 0x60) /* 'L' flag */
-							vp8_hd++;
-						if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
-							vp8_hd++;
-					}
-
-					/* If this is a key frame and the first packet of the frame
-					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
-					cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
-
-					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
-						/* Check VP8 start code bytes */
-						if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
-							JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
-						} else {
-							/* Calculate frame parameters */
-							source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
-							source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
-							source->frame_x_scale = rtp_vp8h->width1 >> 6;
-							source->frame_y_scale = rtp_vp8h->height1 >> 6;
-							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
-							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
-							/* Calculate key frame distance in the stream */
-							source->frame_key_distance = source->frame_count - source->frame_key_last;
-							source->frame_key_last = source->frame_count;
-
-							JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
-							cm_rtpbcast_process_switchers(source);
-						}
-					}
-
-					/* Detect if frame is an inter-frame for VP8 */
-					if (rtp_vp8h->byte0 & 0x01) {
+					/* Check if the frame is the start of partition */
+					if (flags & 0x50) { /* 'S' flag */
+						/* Count amount of frames */
 						guint64 ml = janus_get_monotonic_time();
 						/* Calculate frame rate (FPS) in the stream */
 						if (ml - source->frame_last_usec >= STAT_SECOND) {
@@ -2186,6 +2146,47 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							source->frame_last_usec = ml;
 						}
 						source->frame_count++;
+
+						/* Optional headers */
+						if (flags & 0x80) { /* 'X' flag */
+							vp8_hd++;
+							guint8 xflags = buffer[vp8_pd + 1];
+
+							if (xflags & 0x80) { /* 'I' flag */
+								vp8_hd++;
+								if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
+									vp8_hd++;
+							}
+							if (xflags & 0x60) /* 'L' flag */
+								vp8_hd++;
+							if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
+								vp8_hd++;
+						}
+
+						/* If this is a key frame and the first packet of the frame
+						 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
+						cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+
+						if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
+							/* Check VP8 start code bytes */
+							if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
+								JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
+							} else {
+								/* Calculate frame parameters */
+								source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
+								source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
+								source->frame_x_scale = rtp_vp8h->width1 >> 6;
+								source->frame_y_scale = rtp_vp8h->height1 >> 6;
+								source->frame_mbw = (source->frame_width + 0x0f) >> 4;
+								source->frame_mbh = (source->frame_height + 0x0f) >> 4;
+								/* Calculate key frame distance in the stream */
+								source->frame_key_distance = source->frame_count - source->frame_key_last;
+								source->frame_key_last = source->frame_count;
+
+								JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
+								cm_rtpbcast_process_switchers(source);
+							}
+						}
 					}
 				}
 
