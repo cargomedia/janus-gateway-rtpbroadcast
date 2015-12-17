@@ -310,6 +310,8 @@ typedef struct cm_rtpbcast_rtp_source {
 	guint32 frame_key_last;
 	guint32 frame_key_distance;
 
+	gboolean frame_key_overdue;
+
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
 	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
 	janus_mutex mutex;
@@ -1910,6 +1912,7 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 
 		live_rtp_source->frame_key_last = 0;
 		live_rtp_source->frame_key_distance = 0;
+		live_rtp_source->frame_key_overdue = FALSE;
 
 		live_rtp_source->listeners = NULL;
 		live_rtp_source->waiters = NULL;
@@ -2187,15 +2190,21 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 								source->frame_key_distance = source->frame_count - source->frame_key_last;
 								source->frame_key_last = source->frame_count;
 
-								JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
+								JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
 								cm_rtpbcast_process_switchers(source);
+
+								if (source->frame_key_overdue) {
+									JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
+										source->frame_key_distance - cm_rtpbcast_settings.keyframe_distance_alert, source->index);
+									source->frame_key_overdue = FALSE;
+								}
 							}
-						} else { /* This is an inter-frame */
+						} else /* This is an inter-frame */ if (!source->frame_key_overdue) {
 							/* If keyframe is overdue, complain */
 							guint32 kd = source->frame_count - source->frame_key_last;
 							if (kd > cm_rtpbcast_settings.keyframe_distance_alert) {
-								JANUS_LOG(LOG_ERR, "[%s] Key frame overdue by %u frames\n", name,
-									kd - cm_rtpbcast_settings.keyframe_distance_alert);
+								JANUS_LOG(LOG_ERR, "[%s] Key frame overdue on source %d\n", name, source->index);
+								source->frame_key_overdue = TRUE;
 							}
 						}
 					}
