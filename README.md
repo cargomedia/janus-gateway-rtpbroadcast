@@ -7,7 +7,7 @@ janus-gateway-rtpbroadcast
 Overview
 --------
 This plugin is based on native `janus` streaming plugin. It drops support for `LIVE`, `RTSP`, `VOD` and extends support for `RTP` streaming.
- 
+
 Main extensions:
 - renames plugin with `janus.plugin.cm.rtpbroadcast`
 - changes type of mountpoint `id` from `integer` to `string`
@@ -16,7 +16,7 @@ Main extensions:
 - extends RTP statistics for incoming streams
 - introduces `key-frame` based scheduling for stream and mountpoint switching
 - introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
-- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler` 
+- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler`
 - allows to manually switch the stream or turn off the `auto-switch`
 - introduce IP based white-listing for incoming RTP packages
 - automatically records the first provided stream (per mountpoint) into configurable archives
@@ -38,12 +38,15 @@ Configuration
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Log error if keyframe is not found within this amount of frames
+; keyframe_distance_alert = 600
+
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs
 ; job_path = /tmp/jobs
 
-; prinf pattern for job filenames (.json is auto)
+; printf pattern for job filenames (.json is auto)
 ; Short usage, the following gets substituted:
 ; #{time}     is timestamp (guint64)
 ; #{rand}     is random integer (guin32)
@@ -97,7 +100,7 @@ It supports `create`, `destroy` actions and drops support for `recording` action
 ```
 
 **Response**:
-It responses with auto generated port number for audio and video using `minport` and `maxport` of config file. 
+It responses with auto generated port number for audio and video using `minport` and `maxport` of config file.
 
 ```json
 {
@@ -134,7 +137,7 @@ It responses with auto generated port number for audio and video using `minport`
 
 Asychronous actions
 -------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes 
+It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes
 `watch` action and introduces new `switch-source` action.
 
 ##### Stream definition for responses
@@ -169,7 +172,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `session` is set only for `list` action and reference to current connection/session.
 
 #### `list`
-It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints. 
+It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints.
 
 **Request**:
 ```json
@@ -195,7 +198,7 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 ```
 
 #### `watch`
-It will pick up first stream from the mountpoint list and assigns to the user session. 
+It will pick up first stream from the mountpoint list and assigns to the user session.
 
 **Request**:
 ```json
@@ -215,7 +218,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 ```
 
 #### `switch`
-It will switch the mountpoint for the session. By default will pick up first stream from the mountpoint list. 
+It will switch the mountpoint for the session. By default will pick up first stream from the mountpoint list.
 
 **Request**:
 ```json
@@ -236,7 +239,7 @@ It will switch the mountpoint for the session. By default will pick up first str
 ```
 
 #### `switch-source`
-It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action). 
+It will schedule switching of the stream with `index` for current session mountpoint (position in the `streams`, see `list` action).
 The switch will be triggered when first kef-frame arrives for requested stream. If `index` is higher than `0` then `auto-switch` support will be `OFF`.
 If `index` is equal to `0` then `auto-switch` support will be `ON`.
 
@@ -268,7 +271,7 @@ Job files
 ---------
 It creates configurable `job-files` with plugin events. It support for `archive-finished` or `thumbnailing-finished` event.
 
-##### `archive-finished` 
+##### `archive-finished`
 ```json
 {
     "data": {
@@ -282,7 +285,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```
 
 ##### `thumbnailing-finished`
-Thumbnailer creates archives of configurable duration for configurable interval of time. 
+Thumbnailer creates archives of configurable duration for configurable interval of time.
 
 ```json
 {
@@ -299,14 +302,14 @@ Advanced
 --------
 
 #### Autoswitch
-It calculates advanced statistics for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in 
-configurable manner (see config file) which depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload of subscriber. 
-If "switch" condition is matched the switch action is queued in the `scheduler`. 
+It calculates advanced statistics for incomming `RTP` streams and for incomming `REMB` per `WebRTC` session. It allows to switch streams in
+configurable manner (see config file) which depends on runtime condition of incomming RTP payload of publisher and outgoing RTP payload of subscriber.
+If "switch" condition is matched the switch action is queued in the `scheduler`.
 
 #### Scheduling
-It tracks `RTP/VP8` payload for `key-frames` and triggers the switch of waiting subscribers. The waiting list of subscribers is defined per 
+It tracks `RTP/VP8` payload for `key-frames` and triggers the switch of waiting subscribers. The waiting list of subscribers is defined per
 stream and keeps `WebRTC` session as reference. The `session` can be allocated to the waiting queue or by:
-- setting `autoswitch` to `ON` 
+- setting `autoswitch` to `ON`
 - sending the `switch-source` action request
 - sending the `switch` action request
 
@@ -324,14 +327,14 @@ If scheduled task is executed the subscriber receives media event:
 
 Clients support
 ---------------
-This plugin can be directly managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using 
+This plugin can be directly managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using
 [mountpoint](https://github.com/cargomedia/janus-gateway-ruby#plugins) resource.
- 
+
 Additionally the `ACL` for publishers and subscribers, `job-file` handling can be directly managed by [cm-janus](https://github.com/cargomedia/cm-janus)
 
 Testing
 -------
-There is a simple testing script placed in the `test/tester.py` which allow for triggering basic actions on the plugin. Please find the 
+There is a simple testing script placed in the `test/tester.py` which allow for triggering basic actions on the plugin. Please find the
 [test/README](test/README.md) for more details.
 
 Building

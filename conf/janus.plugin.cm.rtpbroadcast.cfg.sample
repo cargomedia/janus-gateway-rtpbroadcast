@@ -10,12 +10,15 @@
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Log error if keyframe is not found within this amount of frames
+; keyframe_distance_alert = 600
+
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs
 ; job_path = /tmp/jobs
 
-; prinf pattern for job filenames (.json is auto)
+; printf pattern for job filenames (.json is auto)
 ; Short usage, the following gets substituted:
 ; #{time}     is timestamp (guint64)
 ; #{rand}     is random integer (guin32)

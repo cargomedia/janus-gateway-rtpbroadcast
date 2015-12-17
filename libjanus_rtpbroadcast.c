@@ -229,6 +229,7 @@ static struct {
 	guint source_avg_time;
 	guint remb_avg_time;
 	guint switching_delay;
+	guint keyframe_distance_alert;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -302,12 +303,14 @@ typedef struct cm_rtpbcast_rtp_source {
 	int frame_mbw;
 	int frame_mbh;
 
-	int frame_count;
-	int frame_last_count;
+	guint32 frame_count;
+	guint32 frame_last_count;
 	guint64 frame_last_usec;
-	int frame_rate;
-	int frame_key_last;
-	int frame_key_distance;
+	guint32 frame_rate;
+	guint32 frame_key_last;
+	guint32 frame_key_distance;
+
+	gboolean frame_key_overdue;
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
 	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
@@ -585,6 +588,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
+	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -603,7 +607,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"thumbnailing_duration",
 				"source_avg_time",
 				"remb_avg_time",
-				"switching_delay"
+				"switching_delay",
+				"keyframe_distance_alert",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
@@ -612,7 +617,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.source_avg_time,
 				&cm_rtpbcast_settings.remb_avg_time,
-				&cm_rtpbcast_settings.switching_delay
+				&cm_rtpbcast_settings.switching_delay,
+				&cm_rtpbcast_settings.keyframe_distance_alert,
 			};
 
 			_foreach(i, ivars) {
@@ -1385,7 +1391,6 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				cm_rtpbcast_schedule_switch(sessid, src);
 
 				sessid->last_switch = ml;
-				sessid->autoswitch = TRUE;
 			}
 
 			janus_mutex_unlock(&mountpoints_mutex);
@@ -1907,6 +1912,7 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 
 		live_rtp_source->frame_key_last = 0;
 		live_rtp_source->frame_key_distance = 0;
+		live_rtp_source->frame_key_overdue = FALSE;
 
 		live_rtp_source->listeners = NULL;
 		live_rtp_source->waiters = NULL;
@@ -2135,50 +2141,11 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					/* VP8 header */
 					guint8 vp8_hd = vp8_pd + 1;
 
-					/* Optional headers */
-					if (flags & 0x80) { /* 'X' flag */
-						vp8_hd++;
-						guint8 xflags = buffer[vp8_pd + 1];
-
-						if (xflags & 0x80) { /* 'I' flag */
-							vp8_hd++;
-							if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
-								vp8_hd++;
-						}
-						if (xflags & 0x60) /* 'L' flag */
-							vp8_hd++;
-						if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
-							vp8_hd++;
-					}
-
-					/* If this is a key frame and the first packet of the frame
-					 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
-					cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
-
-					if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
-						/* Check VP8 start code bytes */
-						if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
-							JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
-						} else {
-							/* Calculate frame parameters */
-							source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
-							source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
-							source->frame_x_scale = rtp_vp8h->width1 >> 6;
-							source->frame_y_scale = rtp_vp8h->height1 >> 6;
-							source->frame_mbw = (source->frame_width + 0x0f) >> 4;
-							source->frame_mbh = (source->frame_height + 0x0f) >> 4;
-							/* Calculate key frame distance in the stream */
-							source->frame_key_distance = source->frame_count - source->frame_key_last;
-							source->frame_key_last = source->frame_count;
-
-							JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
-							cm_rtpbcast_process_switchers(source);
-						}
-					}
-
-					/* Detect if frame is an inter-frame for VP8 */
-					if (rtp_vp8h->byte0 & 0x01) {
+					/* Check if the frame is the start of partition */
+					if (flags & 0x10) { /* 'S' flag */
+						/* Count amount of frames */
 						guint64 ml = janus_get_monotonic_time();
+
 						/* Calculate frame rate (FPS) in the stream */
 						if (ml - source->frame_last_usec >= STAT_SECOND) {
 							source->frame_rate = source->frame_count - source->frame_last_count;
@@ -2187,6 +2154,59 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							source->frame_last_usec = ml;
 						}
 						source->frame_count++;
+
+						/* Optional headers */
+						if (flags & 0x80) { /* 'X' flag */
+							vp8_hd++;
+							guint8 xflags = buffer[vp8_pd + 1];
+
+							if (xflags & 0x80) { /* 'I' flag */
+								vp8_hd++;
+								if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
+									vp8_hd++;
+							}
+							if (xflags & 0x40) /* 'L' flag */
+								vp8_hd++;
+							if (xflags & 0x20 || xflags & 0x10) /* 'T' or 'K' flag */
+								vp8_hd++;
+						}
+
+						/* If this is a key frame i.e. an inverse 'P' flag of header */
+						cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
+
+						if (!(buffer[vp8_hd] & 0x01)) {
+							/* Check VP8 start code bytes */
+							if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
+								JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
+							} else {
+								/* Calculate frame parameters */
+								source->frame_width = (int)(rtp_vp8h->width1&0x3f)<<8 | (int)(rtp_vp8h->width0);
+								source->frame_height = (int)(rtp_vp8h->height1&0x3f)<<8 | (int)(rtp_vp8h->height0);
+								source->frame_x_scale = rtp_vp8h->width1 >> 6;
+								source->frame_y_scale = rtp_vp8h->height1 >> 6;
+								source->frame_mbw = (source->frame_width + 0x0f) >> 4;
+								source->frame_mbh = (source->frame_height + 0x0f) >> 4;
+								/* Calculate key frame distance in the stream */
+								source->frame_key_distance = source->frame_count - source->frame_key_last;
+								source->frame_key_last = source->frame_count;
+
+								JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
+								cm_rtpbcast_process_switchers(source);
+
+								if (source->frame_key_overdue) {
+									JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
+										source->frame_key_distance - cm_rtpbcast_settings.keyframe_distance_alert, source->index);
+									source->frame_key_overdue = FALSE;
+								}
+							}
+						} else /* This is an inter-frame */ if (!source->frame_key_overdue) {
+							/* If keyframe is overdue, complain */
+							guint32 kd = source->frame_count - source->frame_key_last;
+							if (kd > cm_rtpbcast_settings.keyframe_distance_alert) {
+								JANUS_LOG(LOG_ERR, "[%s] Key frame overdue on source %d\n", name, source->index);
+								source->frame_key_overdue = TRUE;
+							}
+						}
 					}
 				}
 
