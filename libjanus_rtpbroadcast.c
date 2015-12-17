@@ -1385,7 +1385,6 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 				cm_rtpbcast_schedule_switch(sessid, src);
 
 				sessid->last_switch = ml;
-				sessid->autoswitch = TRUE;
 			}
 
 			janus_mutex_unlock(&mountpoints_mutex);
