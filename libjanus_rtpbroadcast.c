@@ -229,6 +229,7 @@ static struct {
 	guint source_avg_time;
 	guint remb_avg_time;
 	guint switching_delay;
+	guint keyframe_distance_alert;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -302,12 +303,12 @@ typedef struct cm_rtpbcast_rtp_source {
 	int frame_mbw;
 	int frame_mbh;
 
-	int frame_count;
-	int frame_last_count;
+	guint32 frame_count;
+	guint32 frame_last_count;
 	guint64 frame_last_usec;
-	int frame_rate;
-	int frame_key_last;
-	int frame_key_distance;
+	guint32 frame_rate;
+	guint32 frame_key_last;
+	guint32 frame_key_distance;
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
 	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
@@ -585,6 +586,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
+	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -603,7 +605,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"thumbnailing_duration",
 				"source_avg_time",
 				"remb_avg_time",
-				"switching_delay"
+				"switching_delay",
+				"keyframe_distance_alert",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
@@ -612,7 +615,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.source_avg_time,
 				&cm_rtpbcast_settings.remb_avg_time,
-				&cm_rtpbcast_settings.switching_delay
+				&cm_rtpbcast_settings.switching_delay,
+				&cm_rtpbcast_settings.keyframe_distance_alert,
 			};
 
 			_foreach(i, ivars) {
@@ -2138,6 +2142,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					if (flags & 0x10) { /* 'S' flag */
 						/* Count amount of frames */
 						guint64 ml = janus_get_monotonic_time();
+
 						/* Calculate frame rate (FPS) in the stream */
 						if (ml - source->frame_last_usec >= STAT_SECOND) {
 							source->frame_rate = source->frame_count - source->frame_last_count;
@@ -2184,6 +2189,13 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 								JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %x\n", name, GPOINTER_TO_UINT(source));
 								cm_rtpbcast_process_switchers(source);
+							}
+						} else { /* This is an inter-frame */
+							/* If keyframe is overdue, complain */
+							guint32 kd = source->frame_count - source->frame_key_last;
+							if (kd > cm_rtpbcast_settings.keyframe_distance_alert) {
+								JANUS_LOG(LOG_ERR, "[%s] Key frame overdue by %u frames\n", name,
+									kd - cm_rtpbcast_settings.keyframe_distance_alert);
 							}
 						}
 					}

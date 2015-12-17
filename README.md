@@ -38,6 +38,9 @@ Configuration
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Log error if keyframe is not found within this amount of frames
+; keyframe_distance_alert = 600
+
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs
