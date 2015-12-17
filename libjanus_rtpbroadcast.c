@@ -2135,7 +2135,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					guint8 vp8_hd = vp8_pd + 1;
 
 					/* Check if the frame is the start of partition */
-					if (flags & 0x50) { /* 'S' flag */
+					if (flags & 0x10) { /* 'S' flag */
 						/* Count amount of frames */
 						guint64 ml = janus_get_monotonic_time();
 						/* Calculate frame rate (FPS) in the stream */
@@ -2157,17 +2157,16 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 								if (buffer[vp8_pd + 2] & 0x80) /* 'M' flag */
 									vp8_hd++;
 							}
-							if (xflags & 0x60) /* 'L' flag */
+							if (xflags & 0x40) /* 'L' flag */
 								vp8_hd++;
-							if (xflags & 0x40 || xflags & 0x20) /* 'T' or 'K' flag */
+							if (xflags & 0x20 || xflags & 0x10) /* 'T' or 'K' flag */
 								vp8_hd++;
 						}
 
-						/* If this is a key frame and the first packet of the frame
-						 * i.e. 'S' flag of descriptor and inverse 'P' flag of header */
+						/* If this is a key frame i.e. an inverse 'P' flag of header */
 						cm_rtp_header_vp8 *rtp_vp8h = (cm_rtp_header_vp8 *)buffer;
 
-						if (!(buffer[vp8_hd] & 0x01) && flags & 0x10) {
+						if (!(buffer[vp8_hd] & 0x01)) {
 							/* Check VP8 start code bytes */
 							if (rtp_vp8h->magic0 != 0x9d || rtp_vp8h->magic1 != 0x01 || rtp_vp8h->magic2 != 0x2a) {
 								JANUS_LOG(LOG_HUGE, "[%s] Malformed header data on source %x\n", name, GPOINTER_TO_UINT(source));
