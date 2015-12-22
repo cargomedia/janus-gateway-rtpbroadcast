@@ -107,7 +107,7 @@ url = RTSP stream URL (only if type=rtsp)
  * \ref plugins
  */
 
-#include "plugins/plugin.h"
+#include "janus/plugin.h"
 
 #include <jansson.h>
 #include <errno.h>
@@ -118,14 +118,14 @@ url = RTSP stream URL (only if type=rtsp)
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
-#include "debug.h"
-#include "apierror.h"
-#include "config.h"
-#include "mutex.h"
-#include "rtp.h"
-#include "rtcp.h"
-#include "record.h"
-#include "utils.h"
+#include "janus/debug.h"
+#include "janus/apierror.h"
+#include "janus/config.h"
+#include "janus/mutex.h"
+#include "janus/rtp.h"
+#include "janus/rtcp.h"
+#include "janus/record.h"
+#include "janus/utils.h"
 
 
 /* Plugin information */

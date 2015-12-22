@@ -40,16 +40,14 @@ Vagrant.configure('2') do |config|
   ].join(' && ')
 
   config.vm.provision 'janus', type: 'shell', inline: [
-    'cd /vagrant/janus-gateway',
-    './autogen.sh',
-    './configure --prefix=/opt/janus --disable-docs --disable-rabbitmq --enable-post-processing',
-    'make && make install'
+    'cd /vagrant/',
+    './get-janus-headers.sh'
   ].join(' && ')
 
   config.vm.provision 'cm-plugin', type: 'shell', inline: [
     'cd /vagrant/',
     './autogen.sh',
-    './configure --prefix=/opt/janus',
+    './configure --prefix=/usr',
     'make && make install'
   ].join(' && ')
 end
