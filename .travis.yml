@@ -12,7 +12,7 @@ before_install:
   - sudo apt-get install -y libtool autoconf automake make bison flex gcc cmake glib-2.0 clang
 
 script:
-  - ./build-janus.sh
+  - ./get-janus-headers.sh
   - ./autogen.sh
   - ./configure --prefix=/usr/
   - make
