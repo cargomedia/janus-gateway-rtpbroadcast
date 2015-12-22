@@ -41,7 +41,7 @@ Vagrant.configure('2') do |config|
 
   config.vm.provision 'janus', type: 'shell', inline: [
     'cd /vagrant/',
-    './build-janus.sh'
+    './get-janus-headers.sh'
   ].join(' && ')
 
   config.vm.provision 'cm-plugin', type: 'shell', inline: [
