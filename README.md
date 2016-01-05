@@ -162,7 +162,9 @@ The response for multiple actions contains the `stream-definition` like follows:
       "key-distance": "<int>"
    },
    "session": {
-      "webrtc-active": "<boolean>"
+      "webrtc-active": "<boolean>",
+      "autoswitch-enabled": "<boolean>",
+      "remb-avg": "<int>"
    }
 }
 ```
