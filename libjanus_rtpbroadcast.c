@@ -320,7 +320,7 @@ static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_
 static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
 static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
 static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
-json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src);
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -966,12 +966,8 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 
 				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i);
 
-				json_t *v = cm_rtpbcast_source_to_json(src);
+				json_t *v = cm_rtpbcast_source_to_json(src, session);
 				json_array_append_new(st, v);
-
-				json_t *u = json_object();
-				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
-				json_object_set_new(v, "session", u);
 			}
 			json_object_set_new(ml, "streams", st);
 			/* TODO: @landswellsong do we need to list anything else here? */
@@ -1627,7 +1623,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
 
-      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
 				json_object_set_new(result, "next", nextsrc);
 
 				session->autoswitch = FALSE;
@@ -1635,7 +1631,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				session->autoswitch = TRUE;
 			}
 			/* Done */
-			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
@@ -1681,8 +1677,8 @@ static void *cm_rtpbcast_handler(void *data) {
 
 			/* Done */
 			result = json_object();
-			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
-      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
+      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
@@ -2732,8 +2728,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	json_object_set_new(result, "event", json_string("changed"));
 
-	json_t *currentsrc = cm_rtpbcast_source_to_json(source);
-	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc);
+	json_t *currentsrc = cm_rtpbcast_source_to_json(source, sessid);
+	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc, sessid);
 
 	json_object_set_new(result, "current", currentsrc);
 	json_object_set_new(result, "previous", previoussrc);
@@ -2758,7 +2754,7 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 	}
 }
 
-json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src) {
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session) {
 		json_t *v = json_object();
 
 		json_object_set_new(v, "id", json_string(src->mp->id));
@@ -2782,6 +2778,12 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src) {
 		json_object_set_new(f, "fps", json_integer(src->frame_rate));
 		json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
 		json_object_set_new(v, "frame", f);
+
+		json_t *u = json_object();
+		json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
+		json_object_set_new(u, "autoswitch-enabled", json_integer(session->autoswitch));
+		json_object_set_new(u, "remb-avg", json_integer(session->remb));
+		json_object_set_new(v, "session", u);
 
 		return v;
 }
