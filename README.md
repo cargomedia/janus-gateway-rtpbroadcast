@@ -341,9 +341,8 @@ used for calculating statistics.
       "<stream-definition-N>",
     ],
     "config": {
-      "source_avg_time": "<int>",
-      "remb_avg_time": "<int>",
-      "session_info_update_time": "<int>"
+      "source_avg_duration": "<int>",
+      "remb_avg_duration": "<int>"
     }
   }
 }
