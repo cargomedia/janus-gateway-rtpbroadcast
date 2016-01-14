@@ -327,6 +327,27 @@ If scheduled task is executed the subscriber receives media event:
 }
 ```
 
+#### Mountpoint information event
+It sends updates with current state of mountpoint which is watched by session. `mountpoint-info` event contains current state of `sources` and configuration 
+used for calculating statistics.
+```json
+{
+  "streaming": "event",
+  "result": {
+    "event": "mountpoint-info",
+    "streams": [
+      "<stream-definition-1>",
+      "<stream-definition-2>",
+      "<stream-definition-N>",
+    ],
+    "config": {
+      "source_avg_duration": "<int>",
+      "remb_avg_duration": "<int>"
+    }
+  }
+}
+```
+
 Clients support
 ---------------
 This plugin can be directly managed by [`janus-gateway-ruby`](https://github.com/cargomedia/janus-gateway-ruby) client using
