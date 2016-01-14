@@ -2825,6 +2825,7 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *v = json_object();
 
 	json_object_set_new(v, "id", json_string(src->mp->id));
+	json_object_set_new(v, "uid", json_string(src->mp->uid));
 	json_object_set_new(v, "index", json_integer(src->index));
 
 	json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
