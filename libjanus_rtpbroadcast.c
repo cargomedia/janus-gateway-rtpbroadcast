@@ -548,9 +548,8 @@ void *cm_rtpbcast_watchdog(void *data) {
 						json_object_set_new(result, "streams", st);
 
 						json_t *config = json_object();
-						json_object_set_new(config, "source_avg_time", json_integer(cm_rtpbcast_settings.source_avg_time));
-						json_object_set_new(config, "remb_avg_time", json_integer(cm_rtpbcast_settings.remb_avg_time));
-						json_object_set_new(config, "session_info_update_time", json_integer(cm_rtpbcast_settings.session_info_update_time));
+						json_object_set_new(config, "source_avg_duration", json_integer(cm_rtpbcast_settings.source_avg_time));
+						json_object_set_new(config, "remb_avg_duration", json_integer(cm_rtpbcast_settings.remb_avg_time));
 						json_object_set_new(result, "config", config);
 
 						json_object_set_new(event, "result", result);
