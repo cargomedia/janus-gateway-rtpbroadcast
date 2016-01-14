@@ -38,6 +38,9 @@ Configuration
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Session streams status update interval, seconds
+; session_info_update_time = 10
+
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
@@ -281,6 +284,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 {
     "data": {
         "id": "<string>",
+        "uid": "<string>",
         "video": "<archive_path/recording_pattern>.mjr",
         "audio": "<archive_path/recording_pattern>.mjr"
     },
@@ -296,6 +300,7 @@ Thumbnailer creates archives of configurable duration for configurable interval 
 {
     "data": {
         "id": "<string>",
+        "uid": "<string>",
         "thumb": "<archive_path/thumbnailing_pattern>.mjr"
     },
     "plugin": "janus.plugin.cm.rtpbroadcast",
