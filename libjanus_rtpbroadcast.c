@@ -542,7 +542,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 						json_t *result = json_object();
 
 						json_object_set_new(event, "streaming", json_string("event"));
-						json_object_set_new(result, "event", json_string("stream-info"));
+						json_object_set_new(result, "event", json_string("mountpoint-info"));
 
 						json_t *st = cm_rtpbcast_sources_to_json(session->source->mp->sources, session);
 						json_object_set_new(result, "streams", st);
