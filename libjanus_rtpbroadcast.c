@@ -260,6 +260,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, int);
 typedef struct cm_rtpbcast_session cm_rtpbcast_session;
 typedef struct cm_rtpbcast_mountpoint {
 	char *id;
+	char *uid;
 	char *name;
 	char *description;
 
@@ -998,6 +999,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 
 			json_t *ml = json_object();
 			json_object_set_new(ml, "id", json_string(mp->id));
+			json_object_set_new(ml, "uid", json_string(mp->uid));
 			json_object_set_new(ml, "name", json_string(mp->name));
 			json_object_set_new(ml, "description", json_string(mp->description));
 
@@ -1193,6 +1195,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "created", json_string(mp->name));
 		json_t *ml = json_object();
 		json_object_set_new(ml, "id", json_string(mp->id));
+		json_object_set_new(ml, "uid", json_string(mp->uid));
 		json_object_set_new(ml, "description", json_string(mp->description));
 /*		json_object_set_new(ml, "streamcount", json_integer(nstreams)); */
 		json_t *st = json_array();
@@ -1859,6 +1862,7 @@ static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp) {
 	mp->destroyed = janus_get_monotonic_time();
 
 	g_free(mp->id);
+	g_free(mp->uid);
 	g_free(mp->name);
 	g_free(mp->description);
 
@@ -1881,6 +1885,17 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		return NULL;
 	}
 	live_rtp->id = g_strdup(id);
+
+	/* Generating an MD5 for UID */
+	guint64 ml = janus_get_monotonic_time();
+	guint32 r = g_random_int();
+
+	char buf[512];
+	g_snprintf(buf, 512, "%lu%llu%s", (long unsigned)r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
+	gchar *md5 = g_compute_checksum_for_string(G_CHECKSUM_MD5, buf, -1);
+
+	live_rtp->uid = g_strdup(md5);
+
 	char tempname[255];
 	if(!name) {
 		memset(tempname, 0, 255);
@@ -1905,7 +1920,6 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 			live_rtp->whitelisted = TRUE;
 		}
 	}
-
 
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_rtp_source*), requests->len);
@@ -1990,6 +2004,7 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 
 	error:
 	g_free(live_rtp->id);
+	g_free(live_rtp->uid);
 	g_free(live_rtp->name);
 	g_free(live_rtp->description);
 	g_array_free(live_rtp->sources, TRUE);
@@ -2481,6 +2496,7 @@ static void cm_rtpbcast_generic_start_recording(
 		size_t start, size_t end, 			/* Inclusive, which ones to process */
 		const char *fname_pattern,			/* Printf pattern for filename */
 		const char *id,									/* streamChannelKey */
+		const char *uid,								/* unique ID */
 		const char *types[],						/* Type labels, per recorder */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
 	) {
@@ -2495,6 +2511,7 @@ static void cm_rtpbcast_generic_start_recording(
 		/* Event for notification */
 		json_t *response = json_object();
 		json_object_set_new(response, "id", json_string(id));
+		json_object_set_new(response, "uid", json_string(uid));
 
 		/* Assuming streams contain both video and audio */
 		guint64 mt = janus_get_monotonic_time();
@@ -2546,6 +2563,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	janus_recorder *recorders[],		/* Array or pointer to recorders */
 	size_t start, size_t end, 			/* Inclusive, which ones to process */
 	const char *id,									/* streamChannelKey */
+	const char *uid,								/* unique ID */
 	const char *types[],						/* Type labels, per recorder */
 	const char *event_name				  /* JSON event name for notification */
 	) {
@@ -2558,6 +2576,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	/* Event for notification */
 	json_t *response = json_object();
 	json_object_set_new(response, "id", json_string(id));
+	json_object_set_new(response, "uid", json_string(uid));
 
 	for (j = start; j <= end; j++) {
 		if (recorders[j]) {
@@ -2589,6 +2608,7 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 		AUDIO, VIDEO,
 		cm_rtpbcast_settings.recording_pattern,
 		mnt->id,
+		mnt->uid,
 		av_names,
 		is_video
 	);
@@ -2599,6 +2619,7 @@ void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *mnt) {
 		mnt->rc,
 		AUDIO, VIDEO,
 		mnt->id,
+		mnt->uid,
 		av_names,
 		"archive-finished"
 	);
@@ -2612,6 +2633,7 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		0, 0,
 		cm_rtpbcast_settings.thumbnailing_pattern,
 		mnt->id,
+		mnt->uid,
 		types,
 		is_video
 	);
@@ -2623,6 +2645,7 @@ void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		mnt->trc,
 		0, 0,
 		mnt->id,
+		mnt->uid,
 		types,
 		"thumbnailing-finished"
 	);
@@ -2802,6 +2825,7 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *v = json_object();
 
 	json_object_set_new(v, "id", json_string(src->mp->id));
+	json_object_set_new(v, "uid", json_string(src->mp->uid));
 	json_object_set_new(v, "index", json_integer(src->index));
 
 	json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
