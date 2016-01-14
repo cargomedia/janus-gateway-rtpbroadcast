@@ -107,6 +107,7 @@ It responses with auto generated port number for audio and video using `minport`
   "streaming": "created",
   "created": "<string>",
   "id": "<string>",
+  "uid": "<string>",
   "description": "<string>",
   "streams": [
     {
@@ -146,6 +147,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 ```json
 {
    "id": "<string>",
+   "uid": "<string>",
    "index": "<int>",
    "audioport": "<int>",
    "videoport": "<int>",
@@ -188,6 +190,7 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 [
   {
      "id": "<string>",
+     "uid": "<string>",
      "name": "<string>",
      "description": "<string>",
      "streams": [
