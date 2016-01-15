@@ -221,6 +221,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
   "streaming": "event",
   "result": {
     "status": "preparing",
+    "stream": "<stream-definition>"
   }
 }
 ```
