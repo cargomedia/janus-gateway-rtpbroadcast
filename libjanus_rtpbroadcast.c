@@ -1670,8 +1670,6 @@ static void *cm_rtpbcast_handler(void *data) {
 			}
 			/* Done */
 			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
-			json_object_set_new(result, "id", json_string(mp->id));
-			json_object_set_new(result, "uid", json_string(mp->uid));
 			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
