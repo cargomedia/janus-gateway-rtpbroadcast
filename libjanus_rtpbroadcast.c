@@ -1599,8 +1599,8 @@ static void *cm_rtpbcast_handler(void *data) {
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
-			json_object_set_new(result, "id", json_string(mp->id));
-			json_object_set_new(result, "uid", json_string(mp->uid));
+			json_t *currentsrc = cm_rtpbcast_source_to_json(src, session);
+			json_object_set_new(result, "stream", currentsrc);
 			json_object_set_new(result, "status", json_string("preparing"));
 		} else if(!strcasecmp(request_text, "start")) {
 			if(session->source == NULL) {
