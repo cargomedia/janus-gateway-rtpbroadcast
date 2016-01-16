@@ -77,74 +77,7 @@ Configuration
 ; thumbnailing_duration = 10
 ```
 
-Synchronous actions
--------------------
-It supports `create`, `destroy` actions and drops support for `recording` action.
-
-#### `create`
-
-**Request**:
-```json
-{
-  "id": "<string>",
-  "name": "<string>",
-  "description": "<string>",
-  "recorded": "<boolean>",
-  "whitelist": "<string>",
-  "streams": [
-    {
-      "audiopt": 111,
-      "audiortpmap": "opus/48000/2",
-      "videopt": 100,
-      "videortpmap": "VP8/90000"
-    }
-  ],
-}
-```
-
-**Response**:
-It responses with auto generated port number for audio and video using `minport` and `maxport` of config file.
-
-```json
-{
-  "streaming": "created",
-  "created": "<string>",
-  "id": "<string>",
-  "uid": "<string>",
-  "description": "<string>",
-  "streams": [
-    {
-      "audioport": "<int>",
-      "videoport": "<int>",
-    }
-  ]
-}
-```
-
-#### `destroy`
-
-**Request**:
-
-```json
-{
-  "id": "<string>"
-}
-```
-
-**Response**:
-```json
-{
-  "streaming": "created",
-  "destroyed": "<string>"
-}
-```
-
-Asychronous actions
--------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes
-`watch` action and introduces new `switch-source` action.
-
-##### Stream definition for responses
+#### Stream definition for responses
 The response for multiple actions contains the `stream-definition` like follows:
 
 ```json
@@ -178,8 +111,72 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session.
 
+Synchronous actions
+-------------------
+It supports `create`, `destroy` actions and drops support for `recording` action. It extends `list` action with new features. 
+
+#### `create`
+
+**Request**:
+```json
+{
+  "id": "<string>",
+  "name": "<string>",
+  "description": "<string>",
+  "recorded": "<boolean>",
+  "whitelist": "<string>",
+  "streams": [
+    {
+      "audiopt": 111,
+      "audiortpmap": "opus/48000/2",
+      "videopt": 100,
+      "videortpmap": "VP8/90000"
+    }
+  ],
+}
+```
+
+**Response**:
+It responses with auto generated port number for audio and video using `minport` and `maxport` of config file.
+
+```json
+{
+  "streaming": "created",
+  "created": "<string>",
+  "stream": {
+    "id": "<string>",
+    "uid": "<string>",
+    "description": "<string>",
+    "streams": [
+      {
+        "audioport": "<int>",
+        "videoport": "<int>",
+      }
+    ]
+  }
+}
+```
+
+#### `destroy`
+
+**Request**:
+
+```json
+{
+  "id": "<string>"
+}
+```
+
+**Response**:
+```json
+{
+  "streaming": "created",
+  "destroyed": "<string>"
+}
+```
+
 #### `list`
-It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints.
+It returns mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints.
 
 **Request**:
 ```json
@@ -190,19 +187,38 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 
 **Response**:
 ```json
-[
-  {
-     "id": "<string>",
-     "uid": "<string>",
-     "name": "<string>",
-     "description": "<string>",
-     "streams": [
-        "<stream-definition-1>",
-        "<stream-definition-2>",
-        "<stream-definition-N>"
-     ]
-  }
-]
+{
+  "streaming": "list",
+  "list": [
+    {
+       "id": "<string>",
+       "uid": "<string>",
+       "name": "<string>",
+       "description": "<string>",
+       "streams": [
+          "<stream-definition-1>",
+          "<stream-definition-2>",
+          "<stream-definition-N>"
+       ]
+    }
+  ]
+}
+```
+
+Asychronous actions
+-------------------
+It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It changes `watch` action and introduces new 
+`switch-source` action.
+
+Asynchronous action gets janus `ack` response for request and then receives `event` with plugin response.
+
+**Response**
+```json
+{
+  "janus": "ack",
+  "session_id": "<int>",
+  "transaction": "<string>"
+}
 ```
 
 #### `watch`
@@ -215,7 +231,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 }
 ```
 
-**Response**:
+**Event**:
 ```json
 {
   "streaming": "event",
@@ -236,7 +252,7 @@ It will switch the mountpoint for the session. By default will pick up first str
 }
 ```
 
-**Response**:
+**Event**:
 ```json
 {
   "streaming": "event",
@@ -259,7 +275,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 }
 ```
 
-**Response**:
+**Event**:
 ```json
 {
   "streaming": "event",
