@@ -231,6 +231,7 @@ static struct {
 	guint switching_delay;
 	guint session_info_update_time;
 	guint keyframe_distance_alert;
+	gboolean recording_enabled;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -629,6 +630,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
+	cm_rtpbcast_settings.recording_enabled = TRUE;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -638,6 +640,22 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	janus_mutex_init(&mountpoints_mutex);
 	/* Parse configuration to populate the mountpoints */
 	if(config != NULL) {
+		/* Boolean */
+		{
+			const char *inames [] = {
+				"recording_enabled"
+			};
+			guint *ivars [] = {
+				&cm_rtpbcast_settings.recording_enabled,
+			};
+
+			_foreach(i, ivars) {
+				janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
+				if (itm && itm->value) {
+					*ivars[i] = janus_is_true(itm->value);
+				}
+			}
+		}
 		/* Integers */
 		{
 			const char *inames [] = {
@@ -1175,7 +1193,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				id ? (char *)json_string_value(id) : NULL,
 				name ? (char *)json_string_value(name) : NULL,
 				desc ? (char *)json_string_value(desc) : NULL,
-				(!recorded) || json_is_true(recorded), 	/* Recorded by default */
+				recorded ? json_is_true(recorded) : cm_rtpbcast_settings.recording_enabled,
 				whitelist ? json_string_value(whitelist) : NULL,
 				sources);
 		if(mp == NULL) {
