@@ -2164,7 +2164,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
 				}
 
-				if (nstream == 0 && j == VIDEO) {
+				if (mountpoint->recorded && nstream == 0 && j == VIDEO) {
 					/* Is it time to do thumbnailing? */
 					guint64 ml = janus_get_monotonic_time();
 					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
