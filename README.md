@@ -87,6 +87,8 @@ The response for multiple actions contains the `stream-definition` like follows:
    "index": "<int>",
    "audioport": "<int>",
    "videoport": "<int>",
+   "listeners_count": "<int>",
+   "waiters_count": "<int>",
    "stats": {
       "min": "<float>",
       "max": "<float>",
