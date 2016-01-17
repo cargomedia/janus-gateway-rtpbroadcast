@@ -2833,8 +2833,8 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
 	json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
 
-	json_object_set_new(v, "listeners_count", json_integer(g_list_length(src->listeners)));
-	json_object_set_new(v, "waiters_count", json_integer(g_list_length(src->waiters)));
+	json_object_set_new(v, "listeners", json_integer(g_list_length(src->listeners)));
+	json_object_set_new(v, "waiters", json_integer(g_list_length(src->waiters)));
 
 	json_t *s = json_object();
 	janus_mutex_lock(&src->stats.stat_mutex);
