@@ -29,7 +29,7 @@
 ; #{plugin}   is plugin name ("janus.plugin.cm.rtpbroadcast")
 ; job_pattern = job-#{md5}
 
-; Enable auto recording
+; Enable auto recording and thumbnailing
 ; recording_enabled = yes
 
 ; Path for recording and thumbnailing
