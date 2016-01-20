@@ -2597,6 +2597,8 @@ static void cm_rtpbcast_generic_stop_recording(
 	json_t *response = json_object();
 	json_object_set_new(response, "id", json_string(id));
 	json_object_set_new(response, "uid", json_string(uid));
+	/* Timestamp of file creation in seconds */
+	json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
 
 	for (j = start; j <= end; j++) {
 		if (recorders[j]) {

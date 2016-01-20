@@ -57,6 +57,9 @@ Configuration
 ; #{plugin}   is plugin name ("janus.plugin.cm.rtpbroadcast")
 ; job_pattern = job-#{md5}
 
+; Enable auto recording and thumbnailing
+; recording_enabled = yes
+
 ; Path for recording and thumbnailing
 ; archive_path = /tmp/recordings"
 
@@ -304,6 +307,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
     "data": {
         "id": "<string>",
         "uid": "<string>",
+        "createdAt": "<int>",
         "video": "<archive_path/recording_pattern>.mjr",
         "audio": "<archive_path/recording_pattern>.mjr"
     },
@@ -320,6 +324,7 @@ Thumbnailer creates archives of configurable duration for configurable interval 
     "data": {
         "id": "<string>",
         "uid": "<string>",
+        "createdAt": "<int>",
         "thumb": "<archive_path/thumbnailing_pattern>.mjr"
     },
     "plugin": "janus.plugin.cm.rtpbroadcast",
