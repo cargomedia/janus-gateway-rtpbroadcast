@@ -1193,7 +1193,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				id ? (char *)json_string_value(id) : NULL,
 				name ? (char *)json_string_value(name) : NULL,
 				desc ? (char *)json_string_value(desc) : NULL,
-				recorded ? json_is_true(recorded) : cm_rtpbcast_settings.recording_enabled,
+				cm_rtpbcast_settings.recording_enabled ? (recorded && json_is_true(recorded)) : FALSE,
 				whitelist ? json_string_value(whitelist) : NULL,
 				sources);
 		if(mp == NULL) {
