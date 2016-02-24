@@ -118,6 +118,16 @@ url = RTSP stream URL (only if type=rtsp)
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+
 #include "janus/debug.h"
 #include "janus/apierror.h"
 #include "janus/config.h"
@@ -398,6 +408,24 @@ typedef struct cm_rtpbcast_context {
 	uint16_t last_seq[AV], base_seq[AV], base_seq_prev[AV];
 } cm_rtpbcast_context;
 
+typedef struct sockaddr_in cm_rtpbcast_udp_server;
+typedef struct cm_rtpbcast_udp_client {
+	char *hostname;
+	int port;
+
+	/* UDP server destination */
+	cm_rtpbcast_udp_server server;
+	/* UDP socket */
+	int socket;
+} cm_rtpbcast_udp_client;
+
+typedef struct cm_rtpbcast_udp_relay_gateway {
+	cm_rtpbcast_udp_client *audio;
+	cm_rtpbcast_udp_client *video;
+} cm_rtpbcast_udp_relay_gateway;
+
+#define RELAY_WEBRTC 0
+#define RELAY_UDP 1
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
@@ -410,6 +438,10 @@ typedef struct cm_rtpbcast_session {
 	guint rembcount;
 	guint64 last_switch;
 	gboolean autoswitch;
+
+	/* Mode of packets relay: RELAY_WEBRTC, RELAY_UDP */
+	gint relay_type;
+	cm_rtpbcast_udp_relay_gateway *relay_udp_gateway;
 
 	gboolean started;
 	gboolean paused;
@@ -494,6 +526,7 @@ typedef struct cm_rtp_header_vp8
 #define CM_RTPBCAST_ERROR_CANT_SWITCH					458
 #define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
+cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port);
 
 /* Streaming watchdog/garbage collector (sort of) */
 void *cm_rtpbcast_watchdog(void *data);
@@ -839,11 +872,24 @@ const char *cm_rtpbcast_get_package(void) {
 }
 
 void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
+	cm_rtpbcast_udp_client *udp_audio_client, *udp_video_client;
+
 	if(g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized)) {
 		*error = -1;
 		return;
 	}
+
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)g_malloc0(sizeof(cm_rtpbcast_session));
+	cm_rtpbcast_udp_relay_gateway *udp_gateway = (cm_rtpbcast_udp_relay_gateway *)g_malloc0(sizeof(cm_rtpbcast_udp_relay_gateway));
+
+	udp_audio_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5002);
+	udp_video_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5004);
+
+	udp_gateway->audio = udp_audio_client;
+	udp_gateway->video = udp_video_client;
+
+	JANUS_LOG(LOG_INFO, "UDP create clients!!!\n");
+
 	if(session == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		*error = -2;
@@ -859,6 +905,8 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 	session->autoswitch = TRUE;
+	session->relay_type = RELAY_WEBRTC;
+	session->relay_udp_gateway = udp_gateway;
 	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -1614,6 +1662,8 @@ static void *cm_rtpbcast_handler(void *data) {
 				}
 			}
 
+			session->relay_type = RELAY_UDP;
+
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
@@ -2288,6 +2338,53 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	return NULL;
 }
 
+cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port) {
+		struct sockaddr_in server;
+		struct hostent *host;
+		cm_rtpbcast_udp_client *udp_client;
+		int s;
+
+		JANUS_LOG(LOG_INFO, "UDP HOSTNAME: %s\n", hostname);
+
+		host = gethostbyname(hostname);
+		if (host == NULL) {
+			JANUS_LOG(LOG_INFO, "UDP send: cannot get hostname!\n");
+			return 1;
+		}
+
+		/* Let's initialize socket for UDP */
+		if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+			JANUS_LOG(LOG_INFO, "UDP send: cannot create socket!\n");
+			return 1;
+		}
+
+		/* Let's initialize server address */
+		memset((char *) &server, 0, sizeof(struct sockaddr_in));
+		server.sin_family = AF_INET;
+		server.sin_port = htons(port);
+		server.sin_addr = *((struct in_addr*) host->h_addr);
+
+		udp_client = (cm_rtpbcast_udp_client *)g_malloc0(sizeof(cm_rtpbcast_udp_client));
+		udp_client->socket = s;
+		udp_client->server = server;
+
+		/* FIXME: cleanup must be done finally */
+		//close(s);
+
+		return udp_client;
+}
+
+int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int video, char *buf, int buf_len) {
+		cm_rtpbcast_udp_client *udp_client = ((video == 1) ? session->relay_udp_gateway->video : session->relay_udp_gateway->audio);
+		/* Message will be send */
+
+		if (sendto(udp_client->socket, buf, buf_len, 0, (struct sockaddr *) &udp_client->server, sizeof(struct sockaddr_in)) == -1) {
+			JANUS_LOG(LOG_INFO, "UDP send: cannot send message!\n");
+			return 1;
+		}
+		return 0;
+}
+
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	cm_rtpbcast_rtp_relay_packet *packet = (cm_rtpbcast_rtp_relay_packet *)user_data;
 	if(!packet || !packet->data || packet->length < 1) {
@@ -2321,8 +2418,17 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	/* Update the timestamp and sequence number in the RTP packet, and send it */
 	packet->data->timestamp = htonl(session->context.last_ts[j]);
 	packet->data->seq_number = htons(session->context.last_seq[j]);
-	if(gateway != NULL)
-		gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
+
+	if (session->relay_type == RELAY_WEBRTC) {
+		if(gateway != NULL) {
+			gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
+		}
+	}
+
+	if (session->relay_type == RELAY_UDP) {
+		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->is_video, (char *)packet->data, packet->length);
+	}
+
 	/* Restore the timestamp and sequence number to what the publisher set them to */
 	packet->data->timestamp = htonl(packet->timestamp);
 	packet->data->seq_number = htons(packet->seq_number);
