@@ -888,8 +888,6 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	udp_gateway->audio = udp_audio_client;
 	udp_gateway->video = udp_video_client;
 
-	JANUS_LOG(LOG_INFO, "UDP create clients!!!\n");
-
 	if(session == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		*error = -2;
@@ -2343,43 +2341,36 @@ cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port) 
 		struct hostent *host;
 		cm_rtpbcast_udp_client *udp_client;
 		int s;
-
-		JANUS_LOG(LOG_INFO, "UDP HOSTNAME: %s\n", hostname);
-
+		/* Let's create and verify the hostname */
 		host = gethostbyname(hostname);
 		if (host == NULL) {
-			JANUS_LOG(LOG_INFO, "UDP send: cannot get hostname!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname!\n");
 			return 1;
 		}
-
 		/* Let's initialize socket for UDP */
 		if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-			JANUS_LOG(LOG_INFO, "UDP send: cannot create socket!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot create socket!\n");
 			return 1;
 		}
-
 		/* Let's initialize server address */
 		memset((char *) &server, 0, sizeof(struct sockaddr_in));
 		server.sin_family = AF_INET;
 		server.sin_port = htons(port);
 		server.sin_addr = *((struct in_addr*) host->h_addr);
-
+		/* Let's create UDP client holder */
 		udp_client = (cm_rtpbcast_udp_client *)g_malloc0(sizeof(cm_rtpbcast_udp_client));
 		udp_client->socket = s;
 		udp_client->server = server;
-
 		/* FIXME: cleanup must be done finally */
 		//close(s);
-
 		return udp_client;
 }
 
 int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int video, char *buf, int buf_len) {
-		cm_rtpbcast_udp_client *udp_client = ((video == 1) ? session->relay_udp_gateway->video : session->relay_udp_gateway->audio);
-		/* Message will be send */
-
+		cm_rtpbcast_udp_client *udp_client = (video ? session->relay_udp_gateway->video : session->relay_udp_gateway->audio);
+		/* Message will be send here */
 		if (sendto(udp_client->socket, buf, buf_len, 0, (struct sockaddr *) &udp_client->server, sizeof(struct sockaddr_in)) == -1) {
-			JANUS_LOG(LOG_INFO, "UDP send: cannot send message!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message!\n");
 			return 1;
 		}
 		return 0;
