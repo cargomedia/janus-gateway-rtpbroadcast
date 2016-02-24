@@ -872,21 +872,12 @@ const char *cm_rtpbcast_get_package(void) {
 }
 
 void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
-	cm_rtpbcast_udp_client *udp_audio_client, *udp_video_client;
-
 	if(g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized)) {
 		*error = -1;
 		return;
 	}
 
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)g_malloc0(sizeof(cm_rtpbcast_session));
-	cm_rtpbcast_udp_relay_gateway *udp_gateway = (cm_rtpbcast_udp_relay_gateway *)g_malloc0(sizeof(cm_rtpbcast_udp_relay_gateway));
-
-	udp_audio_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5002);
-	udp_video_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5004);
-
-	udp_gateway->audio = udp_audio_client;
-	udp_gateway->video = udp_video_client;
 
 	if(session == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
@@ -904,7 +895,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->mps = NULL;
 	session->autoswitch = TRUE;
 	session->relay_type = RELAY_WEBRTC;
-	session->relay_udp_gateway = udp_gateway;
+	session->relay_udp_gateway = NULL;
 	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -1305,7 +1296,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
 		goto plugin_response;
-	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
+	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "watch-udp") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
 		/* These messages are handled asynchronously */
@@ -1659,14 +1650,67 @@ static void *cm_rtpbcast_handler(void *data) {
 					g_strlcat(sdptemp, "a=sendonly\r\n", 2048);
 				}
 			}
-
-			session->relay_type = RELAY_UDP;
-
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
 			json_t *currentsrc = cm_rtpbcast_source_to_json(src, session);
 			json_object_set_new(result, "stream", currentsrc);
+			json_object_set_new(result, "status", json_string("preparing"));
+		} else if(!strcasecmp(request_text, "watch-udp")) {
+			/* TODO:
+				- we need mountpoint ID
+				- we need source ID
+				- we need destination hostname and port for AUDIO
+				- we need destination hostname and port for VIDEO
+			*/
+			json_t *id = json_object_get(root, "id");
+			if(!id) {
+				JANUS_LOG(LOG_ERR, "Missing element (id)\n");
+				error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+				g_snprintf(error_cause, 512, "Missing element (id)");
+				goto error;
+			}
+			if(!json_is_string(id)) {
+				JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
+				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
+				goto error;
+			}
+			const char *id_value = json_string_value(id);
+			janus_mutex_lock(&mountpoints_mutex);
+			cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
+			if(mp == NULL) {
+				janus_mutex_unlock(&mountpoints_mutex);
+				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
+				error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
+				g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
+				goto error;
+			}
+			janus_mutex_unlock(&mountpoints_mutex);
+			JANUS_LOG(LOG_VERB, "Request to watch mountpoint/stream %s\n", id_value);
+			session->stopping = FALSE;
+
+			/* FIXME: source must be specified by message and not be AUTOMATIC */
+			session->source = cm_rtpbcast_pick_source(mp->sources, session->remb);
+			cm_rtpbcast_rtp_source *src = session->source;
+
+			janus_mutex_lock(&src->mutex);
+			src->listeners = g_list_append(src->listeners, session);
+			janus_mutex_unlock(&src->mutex);
+
+			cm_rtpbcast_udp_client *udp_audio_client, *udp_video_client;
+			cm_rtpbcast_udp_relay_gateway *udp_gateway = (cm_rtpbcast_udp_relay_gateway *)g_malloc0(sizeof(cm_rtpbcast_udp_relay_gateway));
+			/* Let's create UDP client for Audio and Video */
+			udp_audio_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5002);
+			udp_video_client = cm_rtpbcast_udp_client_create(g_strdup("10.10.10.112"), 5004);
+			udp_gateway->audio = udp_audio_client;
+			udp_gateway->video = udp_video_client;
+			/* Let's configure session with UDP relay type */
+			session->started = TRUE;
+			session->relay_type = RELAY_UDP;
+			session->relay_udp_gateway = udp_gateway;
+
+			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
 		} else if(!strcasecmp(request_text, "start")) {
 			if(session->source == NULL) {
