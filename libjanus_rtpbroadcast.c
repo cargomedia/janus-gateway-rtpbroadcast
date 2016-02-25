@@ -335,6 +335,8 @@ static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
 static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
 json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session);
 json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -1072,37 +1074,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		json_t *list = json_array();
-		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
-		/* Return a list of all available mountpoints */
-		janus_mutex_lock(&mountpoints_mutex);
-		GHashTableIter iter;
-		gpointer value;
-		g_hash_table_iter_init(&iter, mountpoints);
-		while (g_hash_table_iter_next(&iter, NULL, &value)) {
-			cm_rtpbcast_mountpoint *mp = value;
-
-			/* If id is given, skip others */
-			/* TODO: @landswellsong refactor this without a loop */
-			if (id && strcmp(json_string_value(id), mp->id) != 0)
-				continue;
-
-			json_t *ml = json_object();
-			json_object_set_new(ml, "id", json_string(mp->id));
-			json_object_set_new(ml, "uid", json_string(mp->uid));
-			json_object_set_new(ml, "name", json_string(mp->name));
-			json_object_set_new(ml, "description", json_string(mp->description));
-
-			json_t *st = cm_rtpbcast_sources_to_json(mp->sources, session);
-			json_object_set_new(ml, "streams", st);
-			/* TODO: @landswellsong do we need to list anything else here? */
-			json_array_append_new(list, ml);
-		}
-		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("list"));
-		json_object_set_new(response, "list", list);
+		json_object_set_new(response, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "create")) {
 		/* Create a new stream */
@@ -1298,8 +1273,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(ml, "streams", st);
 		json_object_set_new(response, "stream", ml);
 
-		/* TODO: dump all mountpoint and send to superusers */
-		cm_rtpbcast_notify_supers(response);
+		json_t *mps = json_object();
+		json_object_set_new(mps, "event", json_string("mountpoints-info"));
+		json_object_set_new(mps, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		cm_rtpbcast_notify_supers(mps);
 
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
@@ -1335,8 +1312,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
 
-		/* TODO: dump all mountpoint and send to superusers */
-		cm_rtpbcast_notify_supers(response);
+		json_t *mps = json_object();
+		json_object_set_new(mps, "event", json_string("mountpoints-info"));
+		json_object_set_new(mps, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		cm_rtpbcast_notify_supers(mps);
 
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "watch-udp") || !strcasecmp(request_text, "start")
@@ -3095,6 +3074,38 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 		src->waiters = NULL;
 		janus_mutex_unlock(&src->mutex);
 	}
+}
+
+json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session) {
+	json_t *mps = json_array();
+	janus_mutex_unlock(&mountpoints_mutex);
+	GHashTableIter iter;
+	gpointer value;
+	g_hash_table_iter_init(&iter, mountpoints);
+	while (g_hash_table_iter_next(&iter, NULL, &value)) {
+		cm_rtpbcast_mountpoint *mp = value;
+		json_t *v = cm_rtpbcast_mountpoint_to_json(mp, session);
+		json_array_append_new(mps, v);
+	}
+	janus_mutex_unlock(&mountpoints_mutex);
+	return mps;
+}
+
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session) {
+	json_t *mp = json_object();
+
+	json_object_set_new(mp, "id", json_string(mountpoint->id));
+	json_object_set_new(mp, "uid", json_string(mountpoint->uid));
+	json_object_set_new(mp, "name", json_string(mountpoint->name));
+	json_object_set_new(mp, "description", json_string(mountpoint->description));
+	json_object_set_new(mp, "enabled", json_integer(mountpoint->enabled));
+	json_object_set_new(mp, "recorded", json_integer(mountpoint->recorded));
+	json_object_set_new(mp, "whitelisted", json_integer(mountpoint->whitelisted));
+
+	json_t *st = cm_rtpbcast_sources_to_json(mountpoint->sources, session);
+	json_object_set_new(mp, "streams", st);
+
+	return mp;
 }
 
 json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session) {
