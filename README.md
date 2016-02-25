@@ -247,6 +247,36 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 }
 ```
 
+#### `watch-udp`
+It allows to relay incoming `UDP` traffic as `UDP` without any conversion. In general in forwards packets from `UDP` server to the `UDP` client.
+This request has to pass full destination list for all streams defined by mountpoint. It will link the list of streams with destination list by
+index/position of stream in the array.
+
+**Request**:
+```json
+{
+  "id": "<string>",
+  "streams": [
+    {
+      "audioport": "<integer>",
+      "audiohost": "<string>",
+      "videoport": "<integer>",
+      "videohost": "<string>",
+    }
+  ],
+}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "preparing",
+  }
+}
+```
+
 #### `switch`
 It will switch the mountpoint for the session. By default will pick up first stream from the mountpoint list.
 
