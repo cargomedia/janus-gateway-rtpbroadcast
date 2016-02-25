@@ -410,9 +410,7 @@ typedef struct cm_rtpbcast_context {
 
 typedef struct sockaddr_in cm_rtpbcast_udp_server;
 typedef struct cm_rtpbcast_udp_client {
-	char *hostname;
-	int port;
-
+	struct hostent *host;
 	/* UDP server destination */
 	cm_rtpbcast_udp_server server;
 	/* UDP socket */
@@ -1159,7 +1157,6 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				char tmpnm[512];
 
 				g_snprintf(tmpnm, 512, "%smcast", av_names[j]);
-				JANUS_LOG(LOG_INFO, "Read element (%s) for index %d\n", tmpnm, j);
 				json_t *mcast = json_object_get(v, tmpnm);
 				if(mcast && !json_is_string(mcast)) {
 					JANUS_LOG(LOG_ERR, "Invalid element (%s should be a string)\n", tmpnm);
@@ -2438,15 +2435,12 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 }
 
 cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port) {
-		int s;
-		struct hostent *host;
 		cm_rtpbcast_udp_client *udp_client;
 		/* Let's create UDP client holder */
 		udp_client = (cm_rtpbcast_udp_client *)g_malloc0(sizeof(cm_rtpbcast_udp_client));
-		udp_client->port = port;
 		/* Let's create and verify the hostname */
-		host = gethostbyname(hostname);
-		if (host == NULL) {
+		udp_client->host = gethostbyname(hostname);
+		if (udp_client->host == NULL) {
 			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname!\n");
 			return NULL;
 		}
@@ -2458,11 +2452,11 @@ cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port) 
 		/* Let's initialize server address */
 		memset((char *) &udp_client->server, 0, sizeof(struct sockaddr_in));
 		udp_client->server.sin_family = AF_INET;
-		udp_client->server.sin_port = htons(udp_client->port);
-		udp_client->server.sin_addr = *((struct in_addr*) host->h_addr);
+		udp_client->server.sin_port = htons(port);
+		udp_client->server.sin_addr = *((struct in_addr*) udp_client->host->h_addr);
 		/* FIXME: cleanup must be done finally */
 		/* FIXME: add host or hostname to udp_client */
-		//close(s);
+		//close(udp_client->socket);
 		return udp_client;
 }
 
