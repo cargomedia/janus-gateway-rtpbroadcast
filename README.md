@@ -360,7 +360,7 @@ By passing `true` it upgrades current session into super user session and downgr
 **Event**:
 ```json
 {
-  "streaming": "event",
+  "streaming": "superuser",
   "enabled": 1
 }
 ```
