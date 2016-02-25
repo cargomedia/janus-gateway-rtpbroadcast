@@ -25,7 +25,8 @@ Main extensions:
 - introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
 - introduces `switch-source` end point for switching the stream in the mountpoint
 - introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
-
+- introduces `superuser` end point which upgrades/downgrades session for receiving detailed admin info
+Updated
 Configuration
 -------------
 ```
