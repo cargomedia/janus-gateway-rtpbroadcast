@@ -119,6 +119,26 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session.
 
+#### Mountpoint definition for responses
+The response for multiple actions contains the `mountpoint-definition` like follows:
+
+```json
+{
+  "id": "<string>",
+  "uid": "<string>",
+  "name": "<string>",
+  "description": "<string>",
+  "enabled": "<boolean>",
+  "recorded": "<boolean>",
+  "whitelisted": "<boolean>",
+  "streams": [
+    "<stream-definition-1>",
+    "<stream-definition-2>",
+    "<stream-definition-N>",
+  ]
+}
+```
+
 Synchronous actions
 -------------------
 It supports `create`, `destroy` actions and drops support for `recording` action. It extends `list` action with new features. 
@@ -327,6 +347,24 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 
 `next` source definition is not available if `autoswitch` is set to `true`.
 
+#### `superuser`
+By passing `true` it upgrades current session into super user session and downgrade into regular one by passing `false`.
+
+**Request**:
+```json
+{
+  "enabled": "<boolean>"
+}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "enabled": 1
+}
+```
+
 #### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
 
@@ -409,6 +447,22 @@ used for calculating statistics.
       "source_avg_duration": "<int>",
       "remb_avg_duration": "<int>"
     }
+  }
+}
+```
+
+#### Mountpoints information event
+It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
+```json
+{
+  "streaming": "event",
+  "result": {
+    "event": "mountpoints-info",
+    "list": [
+      "<mountpoint-definition-1>",
+      "<mountpoint-definition-2>",
+      "<mountpoint-definition-N>",
+    ],
   }
 }
 ```
