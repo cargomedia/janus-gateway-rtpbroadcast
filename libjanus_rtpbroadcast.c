@@ -1035,7 +1035,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	const char *request_text = json_string_value(request);
 	if(!strcasecmp(request_text, "superuser")) {
 		/* TODO @landswellsong layer authentication over that */
-		json_t *value = json_object_get(root, "value");
+		json_t *value = json_object_get(root, "enabled");
 		if(!value) {
 			JANUS_LOG(LOG_ERR, "Missing element (value)\n");
 			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
@@ -1052,18 +1052,14 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		session->super_user = json_is_true(value);
 
 		if (session->super_user) {
-			JANUS_LOG(LOG_INFO, "YES: XXXXXXXXXXXXX %d\n");
 			super_sessions = g_list_prepend(super_sessions, session);
 		} else {
-			JANUS_LOG(LOG_INFO, "NO: XXXXXXXXXXXXX %d\n");
 			super_sessions = g_list_remove_all(super_sessions, session);
 		}
 
-		JANUS_LOG(LOG_INFO, "LENGTH: %d\n", g_list_length(super_sessions));
-
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("superuser"));
-		json_object_set_new(response, "value", json_integer(session->super_user));
+		json_object_set_new(response, "enabled", json_integer(session->super_user));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "list")) {
 		json_t *id = json_object_get(root, "id");
@@ -1273,10 +1269,13 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(ml, "streams", st);
 		json_object_set_new(response, "stream", ml);
 
-		json_t *mps = json_object();
-		json_object_set_new(mps, "event", json_string("mountpoints-info"));
-		json_object_set_new(mps, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
-		cm_rtpbcast_notify_supers(mps);
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
 
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
@@ -1312,10 +1311,13 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
 
-		json_t *mps = json_object();
-		json_object_set_new(mps, "event", json_string("mountpoints-info"));
-		json_object_set_new(mps, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
-		cm_rtpbcast_notify_supers(mps);
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
 
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "watch-udp") || !strcasecmp(request_text, "start")
