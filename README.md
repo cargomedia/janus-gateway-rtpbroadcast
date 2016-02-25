@@ -22,8 +22,8 @@ Main extensions:
 - automatically records the first provided stream (per mountpoint) into configurable archives
 - dumps stream RTP payload into configurable thumbnailer archives
 - creates job files and store events like new `archive-finished` or `thumbnailing-finished`
-- introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode.
-- introduces `watch-udp` and `switch-source` end pointMore 
+- introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
+- introduces `watch-udp` and `switch-source` end point
 
 Configuration
 -------------
