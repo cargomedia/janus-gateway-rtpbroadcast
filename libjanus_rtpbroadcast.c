@@ -408,13 +408,10 @@ typedef struct cm_rtpbcast_context {
 	uint16_t last_seq[AV], base_seq[AV], base_seq_prev[AV];
 } cm_rtpbcast_context;
 
-typedef struct sockaddr_in cm_rtpbcast_udp_server;
 typedef struct cm_rtpbcast_udp_client {
-	struct hostent *host;
-	/* UDP server destination */
-	cm_rtpbcast_udp_server server;
-	/* UDP socket */
 	int socket;
+	struct hostent *host;
+	struct sockaddr_in server;
 } cm_rtpbcast_udp_client;
 
 typedef struct cm_rtpbcast_udp_relay_gateway {
