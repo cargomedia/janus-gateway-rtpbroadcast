@@ -23,8 +23,8 @@ Main extensions:
 - dumps stream RTP payload into configurable thumbnailer archives
 - creates job files and store events like new `archive-finished` or `thumbnailing-finished`
 - introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
-- introduces `switch-source` end point for switch the stream in the mountpoint
-- introduce capability for scaling on the `UDP` level by introducing `watch-udp` end point
+- introduces `switch-source` end point for switching the stream in the mountpoint
+- introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
 
 Configuration
 -------------
@@ -252,7 +252,7 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 
 #### `watch-udp`
 It allows to relay incoming `UDP` traffic as `UDP` without any conversion. In general it forwards packets from the `UDP` server to the `UDP` client.
-This request has to pass a full destination list for all streams defined by mountpoint. It will link the current list of streams with new
+This request has to provide a full destination list for all streams defined by mountpoint. It will link the current list of streams with new
 destination list by index/position of the stream in the array.
 
 **Request**:
