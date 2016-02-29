@@ -1674,6 +1674,10 @@ static void *cm_rtpbcast_handler(void *data) {
 					g_strlcat(sdptemp, "a=sendonly\r\n", 2048);
 				}
 			}
+
+			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
+			session->relay_type = RELAY_WEBRTC;
+
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
@@ -1785,6 +1789,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Let's configure session with UDP relay type */
 			session->started = TRUE;
 			session->stopping = FALSE;
+			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
 			session->relay_type = RELAY_UDP;
 
 			result = json_object();
