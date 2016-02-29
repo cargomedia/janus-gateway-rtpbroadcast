@@ -3,7 +3,7 @@
 
 import requests, json, subprocess, time
 
-janus_url = "http://localhost:8088/janus"
+janus_url = "http://10.10.10.111:8088/janus"
 mountpoint_id = "Ababagalamaga"
 session_id = None
 handle_id = None
@@ -77,6 +77,7 @@ def create(id=mountpoint_id):
                     "request": "create",
                     "id": id,
                     "description": "Opus/VP8 tester.py test stream",
+                    "recorded": True,
                     "streams": [
                         {
                             "audiopt": 111,
@@ -119,7 +120,7 @@ audiorate_max = 20000
 # Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
-keyframedist = 120
+keyframedist = 30
 
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
@@ -135,13 +136,13 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="  audiotestsrc !  "
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "
-            args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(ports[i*2]) + "  "
+            args+="      rtpopuspay ! udpsink host=10.10.10.111 port=" + str(ports[i*2]) + "  "
             args+="  videotestsrc pattern = '" + pattern + "' ! "
             args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
             args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
-            args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
+            args+="      rtpvp8pay ! udpsink host=10.10.10.111 port=" + str(ports[i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
         streamer = subprocess.Popen(args, shell=True)
