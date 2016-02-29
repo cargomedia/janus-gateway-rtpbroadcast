@@ -3,7 +3,7 @@
 
 import requests, json, subprocess, time
 
-janus_url = "http://127.0.0.1:8088/janus"
+janus_url = "http://localhost:8088/janus"
 mountpoint_id = "Ababagalamaga"
 session_id = None
 handle_id = None
@@ -120,7 +120,7 @@ audiorate_max = 20000
 # Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
-keyframedist = 30
+keyframedist = 120
 
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
