@@ -335,6 +335,8 @@ static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
 static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
 json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session);
 json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -425,6 +427,7 @@ typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
 	cm_rtpbcast_rtp_source *nextsource; /* Source to switch after a keyframe */
+	gboolean super_user;
 
 	/* REMB and auxillary vars for math */
 	guint64 remb;
@@ -450,8 +453,11 @@ typedef struct cm_rtpbcast_session {
 } cm_rtpbcast_session;
 static GHashTable *sessions;
 static GList *old_sessions;
+static GList *super_sessions;
 static janus_mutex sessions_mutex;
 static void cm_rtpbcast_store_event(json_t* , const char *);
+static void cm_rtpbcast_notify_supers(json_t*);
+static void cm_rtpbcast_notify_session(gpointer, gpointer);
 
 /* Packets we get from gstreamer and relay */
 typedef struct cm_rtpbcast_rtp_relay_packet {
@@ -760,6 +766,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
+	super_sessions = NULL;
 	janus_mutex_init(&sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) cm_rtpbcast_message_free);
 	/* This is the callback we'll need to invoke to contact the gateway */
@@ -892,6 +899,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->autoswitch = TRUE;
 	session->relay_type = RELAY_WEBRTC;
 	session->relay_udp_gateways = NULL;
+	session->super_user = FALSE;
 	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -930,6 +938,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
 		g_hash_table_remove(sessions, handle);
+		super_sessions = g_list_remove_all(super_sessions, session);
 		/* Cleaning up and removing the session is done in a lazy way */
 		old_sessions = g_list_append(old_sessions, session);
 	}
@@ -1024,7 +1033,35 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	}
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
-	if(!strcasecmp(request_text, "list")) {
+	if(!strcasecmp(request_text, "superuser")) {
+		/* TODO @landswellsong layer authentication over that */
+		json_t *value = json_object_get(root, "enabled");
+		if(!value) {
+			JANUS_LOG(LOG_ERR, "Missing element (value)\n");
+			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+			g_snprintf(error_cause, 512, "Missing element (value)");
+			goto error;
+		}
+		if(!json_is_boolean(value)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (value should be boolean)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (value should be boolean)");
+			goto error;
+		}
+
+		session->super_user = json_is_true(value);
+
+		if (session->super_user) {
+			super_sessions = g_list_prepend(super_sessions, session);
+		} else {
+			super_sessions = g_list_remove_all(super_sessions, session);
+		}
+
+		response = json_object();
+		json_object_set_new(response, "streaming", json_string("superuser"));
+		json_object_set_new(response, "enabled", json_integer(session->super_user));
+		goto plugin_response;
+	} else if(!strcasecmp(request_text, "list")) {
 		json_t *id = json_object_get(root, "id");
 		if(id && !json_is_string(id) < 0) {
 			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
@@ -1033,37 +1070,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		json_t *list = json_array();
-		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
-		/* Return a list of all available mountpoints */
-		janus_mutex_lock(&mountpoints_mutex);
-		GHashTableIter iter;
-		gpointer value;
-		g_hash_table_iter_init(&iter, mountpoints);
-		while (g_hash_table_iter_next(&iter, NULL, &value)) {
-			cm_rtpbcast_mountpoint *mp = value;
-
-			/* If id is given, skip others */
-			/* TODO: @landswellsong refactor this without a loop */
-			if (id && strcmp(json_string_value(id), mp->id) != 0)
-				continue;
-
-			json_t *ml = json_object();
-			json_object_set_new(ml, "id", json_string(mp->id));
-			json_object_set_new(ml, "uid", json_string(mp->uid));
-			json_object_set_new(ml, "name", json_string(mp->name));
-			json_object_set_new(ml, "description", json_string(mp->description));
-
-			json_t *st = cm_rtpbcast_sources_to_json(mp->sources, session);
-			json_object_set_new(ml, "streams", st);
-			/* TODO: @landswellsong do we need to list anything else here? */
-			json_array_append_new(list, ml);
-		}
-		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("list"));
-		json_object_set_new(response, "list", list);
+		json_object_set_new(response, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "create")) {
 		/* Create a new stream */
@@ -1258,6 +1268,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		}
 		json_object_set_new(ml, "streams", st);
 		json_object_set_new(response, "stream", ml);
+
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
 		/* Get rid of an existing stream (notice this doesn't remove it from the config file, though) */
@@ -1291,6 +1310,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
+
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "watch-udp") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
@@ -1646,6 +1674,10 @@ static void *cm_rtpbcast_handler(void *data) {
 					g_strlcat(sdptemp, "a=sendonly\r\n", 2048);
 				}
 			}
+
+			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
+			session->relay_type = RELAY_WEBRTC;
+
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
@@ -1757,6 +1789,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Let's configure session with UDP relay type */
 			session->started = TRUE;
 			session->stopping = FALSE;
+			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
 			session->relay_type = RELAY_UDP;
 
 			result = json_object();
@@ -2934,6 +2967,30 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	}
 }
 
+void cm_rtpbcast_notify_supers(json_t* response) {
+	if(!super_sessions)
+		return;
+
+	if(!response)
+		return;
+
+	g_list_foreach(super_sessions, cm_rtpbcast_notify_session, response);
+}
+
+void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
+	cm_rtpbcast_session *session = data;
+	json_t *event = user_data;
+
+	if (!session || !event)
+		return;
+
+	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+	JANUS_LOG(LOG_VERB, "Pushing event: %s\n", event_text);
+	int ret = gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+	JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
+	g_free(event_text);
+}
+
 void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc) {
 	JANUS_LOG(LOG_VERB, "Scheduling session 0x%x to switch to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(newsrc));
 	cm_rtpbcast_rtp_source *ns = sessid->nextsource;
@@ -3014,7 +3071,6 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
 }
 
-
 void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 	if (src->waiters) {
 		janus_mutex_lock(&src->mutex);
@@ -3025,6 +3081,38 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 		src->waiters = NULL;
 		janus_mutex_unlock(&src->mutex);
 	}
+}
+
+json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session) {
+	json_t *mps = json_array();
+	janus_mutex_unlock(&mountpoints_mutex);
+	GHashTableIter iter;
+	gpointer value;
+	g_hash_table_iter_init(&iter, mountpoints);
+	while (g_hash_table_iter_next(&iter, NULL, &value)) {
+		cm_rtpbcast_mountpoint *mp = value;
+		json_t *v = cm_rtpbcast_mountpoint_to_json(mp, session);
+		json_array_append_new(mps, v);
+	}
+	janus_mutex_unlock(&mountpoints_mutex);
+	return mps;
+}
+
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session) {
+	json_t *mp = json_object();
+
+	json_object_set_new(mp, "id", json_string(mountpoint->id));
+	json_object_set_new(mp, "uid", json_string(mountpoint->uid));
+	json_object_set_new(mp, "name", json_string(mountpoint->name));
+	json_object_set_new(mp, "description", json_string(mountpoint->description));
+	json_object_set_new(mp, "enabled", json_integer(mountpoint->enabled));
+	json_object_set_new(mp, "recorded", json_integer(mountpoint->recorded));
+	json_object_set_new(mp, "whitelisted", json_integer(mountpoint->whitelisted));
+
+	json_t *st = cm_rtpbcast_sources_to_json(mountpoint->sources, session);
+	json_object_set_new(mp, "streams", st);
+
+	return mp;
 }
 
 json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session) {

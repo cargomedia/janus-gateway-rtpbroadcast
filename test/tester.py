@@ -77,6 +77,7 @@ def create(id=mountpoint_id):
                     "request": "create",
                     "id": id,
                     "description": "Opus/VP8 tester.py test stream",
+                    "recorded": True,
                     "streams": [
                         {
                             "audiopt": 111,
