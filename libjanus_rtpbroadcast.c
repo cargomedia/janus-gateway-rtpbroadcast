@@ -1778,15 +1778,16 @@ static void *cm_rtpbcast_handler(void *data) {
 
 				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, i);
 
-				janus_mutex_lock(&src->mutex);
-				src->listeners = g_list_append(src->listeners, session);
-				janus_mutex_unlock(&src->mutex);
-
 				/* Let's create UDP gateway for Audio and Video */
 				cm_rtpbcast_udp_relay_gateway udp_gateway;
 				for (j = AUDIO; j <= VIDEO; j++)
 					udp_gateway.sockfd[j] = cm_rtpbcast_udp_client_create(hostname[j], port[j]);
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
+
+				/* All preparations are done, add the session to watchers */
+				janus_mutex_lock(&src->mutex);
+				src->listeners = g_list_append(src->listeners, session);
+				janus_mutex_unlock(&src->mutex);
 			}
 
 			/* Let's configure session with UDP relay type */
@@ -2566,8 +2567,7 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 			gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
 		}
 	}
-
-	if (session->relay_type == RELAY_UDP) {
+	else if (session->relay_type == RELAY_UDP) {
 		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->source_index, packet->is_video, (char *)packet->data, packet->length);
 	}
 
