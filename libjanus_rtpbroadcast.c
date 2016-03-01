@@ -1049,12 +1049,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		session->super_user = json_is_true(value);
+		gboolean su = json_is_true(value);
 
-		if (session->super_user) {
-			super_sessions = g_list_prepend(super_sessions, session);
-		} else {
-			super_sessions = g_list_remove_all(super_sessions, session);
+		if (session->super_user != su) {
+			if (su) {
+				super_sessions = g_list_prepend(super_sessions, session);
+			} else {
+				super_sessions = g_list_remove_all(super_sessions, session);
+			}
+			session->super_user = su;
 		}
 
 		response = json_object();
