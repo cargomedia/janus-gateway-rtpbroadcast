@@ -356,6 +356,7 @@ static void cm_rtpbcast_port_manager_destroy();
 
 static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp);
 static void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data);
+static void cm_rtpbcast_udp_gateways_free(GArray *gateways);
 
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 typedef struct cm_rtpbcast_rtp_source_request {
@@ -922,6 +923,11 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		janus_mutex_unlock(&session->source->mutex);
 	}
 
+	/* If there are UDP watchers, close sockets */
+	if (session->relay_udp_gateways)
+		cm_rtpbcast_udp_gateways_free(session->relay_udp_gateways);
+	session->relay_udp_gateways = NULL;
+
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
@@ -1125,6 +1131,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
+		/* FIXME: free this array in case of error: */
 		sources = g_array_sized_new(FALSE, FALSE,
 			sizeof(cm_rtpbcast_rtp_source_request), nstreams);
 		size_t i;
@@ -1719,7 +1726,10 @@ static void *cm_rtpbcast_handler(void *data) {
 			int port[AV];
 			char *hostname[AV];
 
-			/* FIXME: maybe we should free resource if already there */
+			/* There is a previous version, close it */
+			if (session->relay_udp_gateways)
+				cm_rtpbcast_udp_gateways_free(session->relay_udp_gateways);
+
 			session->relay_udp_gateways = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_udp_relay_gateway), nstreams);
 
 #ifdef json_array_foreach
@@ -2057,6 +2067,19 @@ static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp) {
 		g_array_free(mp->sources, TRUE);
 
 	g_free(mp);
+}
+
+static void cm_rtpbcast_udp_gateways_free(GArray *gateways) {
+	guint i,j;
+
+	for (i = 0; i < gateways->len; i++)
+		for (j = AUDIO; j <= VIDEO; j++) {
+			int fd = g_array_index(gateways, cm_rtpbcast_udp_relay_gateway, i).sockfd[j];
+			if (fd != -1)
+				close(fd);
+		}
+
+	g_array_free(gateways, TRUE);
 }
 
 /* Helper to create an RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
