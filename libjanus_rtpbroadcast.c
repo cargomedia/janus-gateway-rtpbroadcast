@@ -410,16 +410,9 @@ typedef struct cm_rtpbcast_context {
 	uint16_t last_seq[AV], base_seq[AV], base_seq_prev[AV];
 } cm_rtpbcast_context;
 
-typedef struct cm_rtpbcast_udp_client {
-	int socket;
-	struct hostent *host;
-	struct sockaddr_in server;
-} cm_rtpbcast_udp_client;
-
 typedef struct cm_rtpbcast_udp_relay_gateway {
-	cm_rtpbcast_udp_client *audio;
-	cm_rtpbcast_udp_client *video;
 	cm_rtpbcast_rtp_source *source;
+	int sockfd [AV];
 } cm_rtpbcast_udp_relay_gateway;
 
 typedef struct cm_rtpbcast_session {
@@ -528,7 +521,7 @@ typedef struct cm_rtp_header_vp8
 #define CM_RTPBCAST_ERROR_CANT_SWITCH					458
 #define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
-cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port);
+int cm_rtpbcast_udp_client_create(char *hostname, int port);
 
 /* Streaming watchdog/garbage collector (sort of) */
 void *cm_rtpbcast_watchdog(void *data);
@@ -1731,9 +1724,8 @@ static void *cm_rtpbcast_handler(void *data) {
 			cm_rtpbcast_stop_udp_relays(session, NULL);
 
 			/* Create new array */
-			session->relay_udp_gateways = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_udp_relay_gateway*), nstreams);
-			/* FIXME this aint working, debug it, but not first priority
-			   TODO this causes a memory leak
+			session->relay_udp_gateways = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_udp_relay_gateway), nstreams);
+			/* @landswellsong: might be useful if we switch to pointers again
 			g_array_set_clear_func(session->relay_udp_gateways, g_free); */
 
 #ifdef json_array_foreach
@@ -1787,9 +1779,9 @@ static void *cm_rtpbcast_handler(void *data) {
 				janus_mutex_unlock(&src->mutex);
 
 				/* Let's create UDP gateway for Audio and Video */
-				cm_rtpbcast_udp_relay_gateway *udp_gateway = g_malloc0(sizeof(cm_rtpbcast_udp_relay_gateway));
-				udp_gateway->audio = cm_rtpbcast_udp_client_create(hostname[AUDIO], port[AUDIO]);
-				udp_gateway->video = cm_rtpbcast_udp_client_create(hostname[VIDEO], port[VIDEO]);
+				cm_rtpbcast_udp_relay_gateway udp_gateway;
+				for (j = AUDIO; j <= VIDEO; j++)
+					udp_gateway.sockfd[j] = cm_rtpbcast_udp_client_create(hostname[j], port[j]);
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
 				udp_gateway->source = src;
 			}
@@ -2470,44 +2462,48 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	return NULL;
 }
 
-cm_rtpbcast_udp_client *cm_rtpbcast_udp_client_create(char *hostname, int port) {
-		cm_rtpbcast_udp_client *udp_client;
-		/* Let's create UDP client holder */
-		udp_client = (cm_rtpbcast_udp_client *)g_malloc0(sizeof(cm_rtpbcast_udp_client));
+	int cm_rtpbcast_udp_client_create(char *hostname, int port) {
+		int fd;
 		/* Let's create and verify the hostname */
-		udp_client->host = gethostbyname(hostname);
-		if (udp_client->host == NULL) {
+		struct hostent *host = gethostbyname(hostname);
+		if (host == NULL) {
 			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname!\n");
-			return NULL;
+			return -1;
 		}
 		/* Let's initialize socket for UDP */
-		if ((udp_client->socket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+		if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
 			JANUS_LOG(LOG_ERR, "UDP:Send: cannot create socket!\n");
-			return NULL;
+			return -1;
 		}
 		/* Let's initialize server address */
-		memset((char *) &udp_client->server, 0, sizeof(struct sockaddr_in));
-		udp_client->server.sin_family = AF_INET;
-		udp_client->server.sin_port = htons(port);
-		udp_client->server.sin_addr = *((struct in_addr*) udp_client->host->h_addr);
+		struct sockaddr_in sin;
+		memset((char *) &sin, 0, sizeof(struct sockaddr_in));
+		sin.sin_family = AF_INET;
+		sin.sin_port = htons(port);
+		sin.sin_addr = *((struct in_addr*) host->h_addr);
 		/* FIXME: cleanup must be done finally */
 		/* FIXME: add host or hostname to udp_client */
 		//close(udp_client->socket);
-		return udp_client;
+
+		/* Setting the socket destination address, with UDP doesn't really connect */
+		if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)) == -1) {
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot connect socket!\n");
+			return -1;
+		}
+
+		return fd;
 }
 
-int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int source_index, int video, char *buf, int buf_len) {
+int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int source_index, int isvideo, char *buf, int buf_len) {
 		if(session->relay_udp_gateways != NULL) {
-			cm_rtpbcast_udp_relay_gateway *gateway = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway *, source_index);
-			if(gateway) {
-				cm_rtpbcast_udp_client *udp_client = ((video == 1) ? gateway->video : gateway->audio);
-				if(udp_client) {
-					if (sendto(udp_client->socket, buf, buf_len, 0, (struct sockaddr *) &udp_client->server, sizeof(struct sockaddr_in)) == -1) {
-						JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message!\n");
-						return 1;
-					}
-					return 0;
+			cm_rtpbcast_udp_relay_gateway gateway = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway , source_index);
+			int fd = gateway.sockfd[isvideo];
+			if(fd != -1) {
+				if (send(fd, buf, buf_len, 0) == -1) {
+					JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message!\n");
+					return 1;
 				}
+				return 0;
 			}
 		}
 		return 1;
