@@ -2467,12 +2467,12 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 		/* Let's create and verify the hostname */
 		struct hostent *host = gethostbyname(hostname);
 		if (host == NULL) {
-			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname! Reason: %s\n", strerror(errno));
 			return -1;
 		}
 		/* Let's initialize socket for UDP */
 		if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-			JANUS_LOG(LOG_ERR, "UDP:Send: cannot create socket!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot create socket! Reason: %s\n", strerror(errno));
 			return -1;
 		}
 		/* Let's initialize server address */
@@ -2487,7 +2487,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 		/* Setting the socket destination address, with UDP doesn't really connect */
 		if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)) == -1) {
-			JANUS_LOG(LOG_ERR, "UDP:Send: cannot connect socket!\n");
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot connect socket! Reason: %s\n", strerror(errno));
 			return -1;
 		}
 
@@ -2500,7 +2500,7 @@ int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int sourc
 			int fd = gateway.sockfd[isvideo];
 			if(fd != -1) {
 				if (send(fd, buf, buf_len, 0) == -1) {
-					JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message!\n");
+					JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message! Reason %s\n", strerror(errno));
 					return 1;
 				}
 				return 0;
