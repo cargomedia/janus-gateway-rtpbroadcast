@@ -5,10 +5,18 @@ import requests, json, subprocess, time
 
 janus_url = "http://localhost:8088/janus"
 mountpoint_id = "Ababagalamaga"
-session_id = None
-handle_id = None
-ports = None
-streamer = None
+
+insttemplate = {
+    "session_id" : None,
+    "handle_id" : None,
+    "ports" : None,
+    "streamer" : None,
+}
+
+def newinst():
+    return insttemplate.copy()
+
+definstance = newinst()
 
 # Older requsests lack normal JSON POST
 def mypost(url, json_v):
@@ -27,52 +35,53 @@ def janus_cmd(cmd, cond = False, action = lambda x: x ):
             print(json.dumps(j,indent=4, separators=(',', ': ')))
             action(j)
 
-def greet():
+def greet(session=None):
+    session = session or definstance
     def helper(j):
-        global session_id
-        session_id = j["data"]["id"]
+        session["session_id"] = j["data"]["id"]
     janus_cmd({ "janus": "create",
                 "transaction": "tester.py"}, action = helper)
 
 # If delay != 0, sends keepalives every second over delay seconds
-def keepalive(delay = 0):
+def keepalive(delay = 0, session=None):
+    session = session or definstance
     janus_cmd({ "janus": "keepalive",
                 "transaction": "tester.py",
-                "session_id": session_id }, not session_id)
+                "session_id": session["session_id"] }, not session["session_id"])
     if delay > 0:
         for i in range(0,delay):
             time.sleep(1)
             keepalive()
 
-
-def attach(plugin = "janus.plugin.cm.rtpbroadcast"):
+def attach(plugin = "janus.plugin.cm.rtpbroadcast", session=None):
+    session = session or definstance
     def helper(j):
-        global handle_id
-        handle_id = j["data"]["id"]
+        session["handle_id"] = j["data"]["id"]
     janus_cmd({ "janus": "attach",
                 "plugin": plugin,
                 "transaction": "tester.py",
-                "session_id": session_id }, not session_id, helper)
+                "session_id": session["session_id"] }, not session["session_id"], helper)
 
-def list(id=None):
+def list(id=None, session=None):
+    session = session or definstance
     body = not id and { "request": "list" } or { "request": "list", "id": id}
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
-                "session_id": session_id,
-                "handle_id": handle_id,
-                "body": body}, not session_id or not handle_id)
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
+                "body": body}, not session["session_id"] or not session["handle_id"])
 
-def create(id=mountpoint_id):
+def create(id=mountpoint_id, session=None):
+    session = session or definstance
     def helper(j):
-        global ports
-        ports = []
+        session["ports"] = []
         for i in j["plugindata"]["data"]["stream"]["streams"]:
-            ports.append(i["audioport"])
-            ports.append(i["videoport"])
+            session["ports"].append(i["audioport"])
+            session["ports"].append(i["videoport"])
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
-                "session_id": session_id,
-                "handle_id": handle_id,
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
                 "body": {
                     "request": "create",
                     "id": id,
@@ -99,17 +108,18 @@ def create(id=mountpoint_id):
                         },
                     ]
                 }
-            }, not session_id or not handle_id, helper)
+            }, not session["session_id"] or not session["handle_id"], helper)
 
-def destroy():
+def destroy(session=None):
+    session = session or definstance
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
-                "session_id": session_id,
-                "handle_id": handle_id,
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
                 "body": {
                     "request": "destroy",
                     "id": mountpoint_id
-                } }, not session_id or not handle_id)
+                } }, not session["session_id"] or not session["handle_id"])
 
 # Streaming bitrates
 videorate_min = 20000
@@ -123,11 +133,11 @@ fontsize = 100
 keyframedist = 120
 
 
-def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max):
-    global streamer
+def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max, session=None):
+    session = session or definstance
     args = "gst-launch-1.0 "
-    nstreams = int(len(ports)/2)
-    if streamer:
+    nstreams = int(len(session["ports"])/2)
+    if session["streamer"]:
         print("Streamer already active!")
     else:
         for i in range(0,nstreams):
@@ -136,28 +146,66 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="  audiotestsrc !  "
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "
-            args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(ports[i*2]) + "  "
+            args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(session["ports"][i*2]) + "  "
             args+="  videotestsrc pattern = '" + pattern + "' ! "
             args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
             args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
-            args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(ports[i*2 + 1]) + " "
+            args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(session["ports"][i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
-        streamer = subprocess.Popen(args, shell=True)
+        session["streamer"] = subprocess.Popen(args, shell=True)
 
-def unstream():
-    global streamer
-    if not streamer:
+def unstream(session=None):
+    session = session or definstance
+    if not session["streamer"]:
         print("Streamer not active!")
     else:
-        streamer.terminate()
+        session["streamer"].terminate()
         print("Streamer stopped")
-        streamer = None
+        session["streamer"] = None
+
+def udp_watch(session=None):
+    session = session or definstance
+    janus_cmd({ "janus": "message",
+                "transaction": "tester.py",
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
+                "body": {
+                    "request": "watch-udp",
+                    "id": mountpoint_id,
+                    # TODO: this is copied from @kris-lab streaming.js
+                    "streams": [
+                      {
+                        "audioport": 5002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 5004,
+                        "videohost": '10.10.10.112'
+                      },
+                      {
+                        "audioport": 6002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 6004,
+                        "videohost": '10.10.10.112'
+                      },
+                      {
+                        "audioport": 7002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 7004,
+                        "videohost": '10.10.10.112'
+                      }
+                    ]
+                } }, not session["session_id"] or not session["handle_id"])
 
 def session():
     greet()
     attach()
     destroy()
     create()
+
+def udp_session():
+    udp = newinst()
+    greet(session=udp)
+    attach(session=udp)
+    udp_watch(session=udp)
