@@ -166,8 +166,46 @@ def unstream(session=None):
         print("Streamer stopped")
         session["streamer"] = None
 
+def udp_watch(session=None):
+    session = session or definstance
+    janus_cmd({ "janus": "message",
+                "transaction": "tester.py",
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
+                "body": {
+                    "request": "watch-udp",
+                    "id": mountpoint_id,
+                    # TODO: this is copied from @kris-lab streaming.js
+                    "streams": [
+                      {
+                        "audioport": 5002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 5004,
+                        "videohost": '10.10.10.112'
+                      },
+                      {
+                        "audioport": 6002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 6004,
+                        "videohost": '10.10.10.112'
+                      },
+                      {
+                        "audioport": 7002,
+                        "audiohost": '10.10.10.112',
+                        "videoport": 7004,
+                        "videohost": '10.10.10.112'
+                      }
+                    ]
+                } }, not session["session_id"] or not session["handle_id"])
+
 def session():
     greet()
     attach()
     destroy()
     create()
+
+def udp_session():
+    udp = newinst()
+    greet(session=udp)
+    attach(session=udp)
+    udp_watch(session=udp)
