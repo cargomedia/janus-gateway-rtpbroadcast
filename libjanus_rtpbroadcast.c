@@ -202,6 +202,7 @@ static volatile gint initialized = 0, stopping = 0;
 static janus_callbacks *gateway = NULL;
 static GThread *handler_thread;
 static GThread *watchdog;
+static GThread *udp_relay;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
@@ -412,8 +413,11 @@ typedef struct cm_rtpbcast_context {
 
 typedef struct cm_rtpbcast_udp_relay_gateway {
 	cm_rtpbcast_rtp_source *source;
-	int sockfd [AV];
+	struct sockaddr_in sin[AV];
+	gboolean valid[AV];
 } cm_rtpbcast_udp_relay_gateway;
+
+gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin);
 
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
@@ -521,7 +525,87 @@ typedef struct cm_rtp_header_vp8
 #define CM_RTPBCAST_ERROR_CANT_SWITCH					458
 #define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
-int cm_rtpbcast_udp_client_create(char *hostname, int port);
+/* UDP relay queue */
+typedef struct cm_rtpbcast_udp_relay_queue_node {
+	void *data;
+	guint len;
+	struct sockaddr_in dst;
+} cm_rtpbcast_udp_relay_queue_node;
+
+GList* /* cm_rtpbcast_udp_relay_queue_node* */ udp_relay_queue;
+janus_mutex udp_relay_mutex;
+
+/* Puts a packet in the queue */
+void cm_rtpbcast_udp_enqueue(void *data, guint len, struct sockaddr_in *dst) {
+	/* Copy data over */
+	cm_rtpbcast_udp_relay_queue_node *nd = g_malloc0(sizeof(cm_rtpbcast_udp_relay_queue_node));
+	nd->len = len;
+	nd->data = g_malloc0(len);
+	memcpy(nd->data, data, len);
+	memcpy(&nd->dst, dst, sizeof(struct sockaddr_in));
+
+	/* Note this adds element from the front. Relay thread reverses the list.
+	 * Also relay thread deallocates memory. */
+	janus_mutex_lock(&udp_relay_mutex);
+	udp_relay_queue = g_list_prepend(udp_relay_queue, nd);
+	janus_mutex_unlock(&udp_relay_mutex);
+}
+
+/* FIXME: what to do if socket() fails and thread exists? */
+void *cm_rtpbcast_udp_relay_thread(void *data) {
+	JANUS_LOG(LOG_INFO, "UDP:Relay: thread started\n");
+
+	/* As frugal as we are, only one socket for all the UDP */
+	int fd;
+	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+		JANUS_LOG(LOG_ERR, "UDP:Relay: cannot create socket! Reason: %s\n", strerror(errno));
+		return NULL;
+	}
+
+	/* On timer event, thread swaps udp_relay_queue with this one */
+	/* @landswellsong: currently it just creates a fresh list each round. Maybe
+	 * there is some rationale to send only certain amount of packets and
+	 * swap queues? I can't tell upfront where the bottleneck is. */
+	GList *queue = NULL;
+
+	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
+		janus_mutex_lock(&udp_relay_mutex);
+		queue = udp_relay_queue;
+		udp_relay_queue = NULL;
+		janus_mutex_unlock(&udp_relay_mutex);
+
+		/* Elements are prepended for performance, traverse from the back */
+		guint n = 0, success = 0;
+		while (queue) {
+				GList *last = g_list_last(queue);
+				cm_rtpbcast_udp_relay_queue_node *nd = last->data;
+
+				/* Send the packet */
+				n++;
+				if (sendto(fd, nd->data, nd->len, 0, (struct sockaddr *) &nd->dst, sizeof(struct sockaddr_in)) == -1)
+					JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
+				else
+					success++;
+
+				/* Deallocate stuff */
+				g_free(nd->data);
+				g_free(nd);
+
+				/* Remove the last one */
+				queue = g_list_delete_link(queue, last);
+		}
+
+		JANUS_LOG(LOG_HUGE, "UDP:Relay: done, queue was %d, sent %d successfully.\n", n, success);
+
+		/* FIXME add configuration option and sleep only the leftover time */
+		g_usleep(50000);
+	}
+
+	/* FIXME: should we bother removing the queue too? */
+	close(fd);
+
+	return NULL;
+}
 
 /* Streaming watchdog/garbage collector (sort of) */
 void *cm_rtpbcast_watchdog(void *data);
@@ -772,6 +856,15 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	if(!watchdog) {
 		g_atomic_int_set(&initialized, 0);
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast watchdog thread...\n", error->code, error->message ? error->message : "??");
+		return -1;
+	}
+	/* Start the UDP relay thread */
+	janus_mutex_init(&udp_relay_mutex);
+	udp_relay_queue = NULL;
+  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
+	if(!udp_relay) {
+		g_atomic_int_set(&initialized, 0);
+		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
 	}
 	/* Launch the thread that will handle incoming messages */
@@ -1776,8 +1869,15 @@ static void *cm_rtpbcast_handler(void *data) {
 
 				/* Let's create UDP gateway for Audio and Video */
 				cm_rtpbcast_udp_relay_gateway udp_gateway;
-				for (j = AUDIO; j <= VIDEO; j++)
-					udp_gateway.sockfd[j] = cm_rtpbcast_udp_client_create(hostname[j], port[j]);
+				for (j = AUDIO; j <= VIDEO; j++) {
+					if (!cm_rtpbcast_construct_address(hostname[j], port[j], &udp_gateway.sin[j])) {
+						JANUS_LOG(LOG_ERR, "Can not resolve %s:%d for streaming %s, skipping output.", hostname[j], port[j], av_names[j]);
+						udp_gateway.valid[j] = FALSE;
+					}
+					else {
+						udp_gateway.valid[j] = TRUE;
+					}
+				}
 				udp_gateway.source = src;
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
 
@@ -2463,49 +2563,32 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	return NULL;
 }
 
-	int cm_rtpbcast_udp_client_create(char *hostname, int port) {
-		int fd;
+	gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin) {
 		/* Let's create and verify the hostname */
 		struct hostent *host = gethostbyname(hostname);
 		if (host == NULL) {
 			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname! Reason: %s\n", strerror(errno));
-			return -1;
+			return FALSE;
 		}
-		/* Let's initialize socket for UDP */
-		if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-			JANUS_LOG(LOG_ERR, "UDP:Send: cannot create socket! Reason: %s\n", strerror(errno));
-			return -1;
-		}
+
 		/* Let's initialize server address */
-		struct sockaddr_in sin;
-		memset((char *) &sin, 0, sizeof(struct sockaddr_in));
-		sin.sin_family = AF_INET;
-		sin.sin_port = htons(port);
-		sin.sin_addr = *((struct in_addr*) host->h_addr);
-		/* FIXME: cleanup must be done finally */
-		/* FIXME: add host or hostname to udp_client */
-		//close(udp_client->socket);
+		memset((char *) sin, 0, sizeof(struct sockaddr_in));
+		sin->sin_family = AF_INET;
+		sin->sin_port = htons(port);
+		sin->sin_addr = *((struct in_addr*) host->h_addr);
 
-		/* Setting the socket destination address, with UDP doesn't really connect */
-		if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr_in)) == -1) {
-			JANUS_LOG(LOG_ERR, "UDP:Send: cannot connect socket! Reason: %s\n", strerror(errno));
-			return -1;
-		}
-
-		return fd;
+		return TRUE;
 }
 
 int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int source_index, int isvideo, char *buf, int buf_len) {
 		if(session->relay_udp_gateways != NULL) {
 			cm_rtpbcast_udp_relay_gateway gateway = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway , source_index);
-			int fd = gateway.sockfd[isvideo];
-			if(fd != -1) {
-				if (send(fd, buf, buf_len, 0) == -1) {
-					JANUS_LOG(LOG_ERR, "UDP:Send: cannot send message! Reason %s\n", strerror(errno));
-					return 1;
-				}
-				return 0;
+
+			if (gateway.valid[isvideo]) {
+				cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
+				return 1;
 			}
+			else return 0;
 		}
 		return 1;
 }
@@ -2949,6 +3032,7 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 					 * g_list_remove_all becomes a redundant call. */
 					cm_rtpbcast_stop_udp_relays(session, src); /* TODO: any kind of notification maybe? */
 				}
+				/* FIXME: why not remove_link ? */
 				src->listeners = g_list_remove_all(src->listeners, session);
 				viewer = g_list_first(src->listeners);
 			}
