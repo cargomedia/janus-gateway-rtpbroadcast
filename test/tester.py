@@ -23,11 +23,11 @@ def mypost(url, json_v):
     return requests.request("POST", url, data=json.dumps(json_v), headers={ "Content-Type" : "application/json" })
 
 # TODO maybe some decorator here?
-def janus_cmd(cmd, cond = False, action = lambda x: x , endpoint = ""):
+def janus_cmd(cmd, cond = False, action = lambda x: x ):
     if cond:
         print("misplaced call!")
     else:
-        r = mypost(janus_url + endpoint, cmd)
+        r = mypost(janus_url, cmd)
         if not r:
             print("error in communication!")
         else:
@@ -46,8 +46,8 @@ def greet(session=None):
 def keepalive(delay = 0, session=None):
     session = session or definstance
     janus_cmd({ "janus": "keepalive",
-                "transaction": "tester.py" }, not session["session_id"],
-                endpoint = "/" + str(session["session_id"]))
+                "transaction": "tester.py",
+                "session_id": session["session_id"] }, not session["session_id"])
     if delay > 0:
         for i in range(0,delay):
             time.sleep(1)
@@ -59,16 +59,17 @@ def attach(plugin = "janus.plugin.cm.rtpbroadcast", session=None):
         session["handle_id"] = j["data"]["id"]
     janus_cmd({ "janus": "attach",
                 "plugin": plugin,
-                "transaction": "tester.py" }, not session["session_id"], helper,
-                endpoint = "/" + str(session["session_id"]))
+                "transaction": "tester.py",
+                "session_id": session["session_id"] }, not session["session_id"], helper)
 
 def list(id=None, session=None):
     session = session or definstance
     body = not id and { "request": "list" } or { "request": "list", "id": id}
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
-                "body": body}, not session["session_id"] or not session["handle_id"],
-                endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
+                "body": body}, not session["session_id"] or not session["handle_id"])
 
 def create(id=mountpoint_id, session=None):
     session = session or definstance
@@ -79,6 +80,8 @@ def create(id=mountpoint_id, session=None):
             session["ports"].append(i["videoport"])
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
                 "body": {
                     "request": "create",
                     "id": id,
@@ -105,18 +108,18 @@ def create(id=mountpoint_id, session=None):
                         },
                     ]
                 }
-            }, not session["session_id"] or not session["handle_id"], helper,
-            endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
+            }, not session["session_id"] or not session["handle_id"], helper)
 
 def destroy(session=None):
     session = session or definstance
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
                 "body": {
                     "request": "destroy",
                     "id": mountpoint_id
-                } }, not session["session_id"] or not session["handle_id"],
-                endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
+                } }, not session["session_id"] or not session["handle_id"])
 
 # Streaming bitrates
 videorate_min = 20000
@@ -167,6 +170,8 @@ def udp_watch(session=None):
     session = session or definstance
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
+                "session_id": session["session_id"],
+                "handle_id": session["handle_id"],
                 "body": {
                     "request": "watch-udp",
                     "id": mountpoint_id,
@@ -191,15 +196,7 @@ def udp_watch(session=None):
                         "videohost": '10.10.10.112'
                       }
                     ]
-                } }, not session["session_id"] or not session["handle_id"],
-                endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
-
-def detach(plugin = "janus.plugin.cm.rtpbroadcast", session=None):
-    session = session or definstance
-    janus_cmd({ "janus": "detach",
-                "plugin": plugin,
-                "transaction": "tester.py" }, not session["session_id"] or not session["handle_id"],
-                endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
+                } }, not session["session_id"] or not session["handle_id"])
 
 def session():
     greet()
@@ -207,8 +204,8 @@ def session():
     destroy()
     create()
 
-def udp_session(session=None):
-    udp = session or newinst()
+def udp_session():
+    udp = newinst()
     greet(session=udp)
     attach(session=udp)
     udp_watch(session=udp)
