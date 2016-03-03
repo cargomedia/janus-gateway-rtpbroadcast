@@ -1999,7 +1999,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 				goto error;
 			}
-			char *id_value = json_string_value(id);
+			const char *id_value = json_string_value(id);
 			janus_mutex_lock(&mountpoints_mutex);
 			cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 			if(mp == NULL) {
