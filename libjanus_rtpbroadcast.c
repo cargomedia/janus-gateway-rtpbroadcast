@@ -419,6 +419,7 @@ typedef struct cm_rtpbcast_udp_client {
 typedef struct cm_rtpbcast_udp_relay_gateway {
 	cm_rtpbcast_udp_client *audio;
 	cm_rtpbcast_udp_client *video;
+	cm_rtpbcast_rtp_source *source;
 } cm_rtpbcast_udp_relay_gateway;
 
 #define RELAY_WEBRTC 0
@@ -458,6 +459,9 @@ static janus_mutex sessions_mutex;
 static void cm_rtpbcast_store_event(json_t* , const char *);
 static void cm_rtpbcast_notify_supers(json_t*);
 static void cm_rtpbcast_notify_session(gpointer, gpointer);
+/* Stops UDP relays for the given session. Second parameter specifies the source pointer
+ * which has a mutex locked within current context and thus doesn't need locking */
+static void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *, cm_rtpbcast_rtp_source *);
 
 /* Packets we get from gstreamer and relay */
 typedef struct cm_rtpbcast_rtp_relay_packet {
@@ -923,11 +927,16 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		return;
 	}
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
+	/* If session is watching something, remove it from listeners */
+	/* TODO: abstract "attach to source" and "remove from source" with a special func
+	 * also see below at cm_rtpbcast_stop_udp_relays() for example */
 	if(session->source) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+	/* If the session is relaying UDP, also remove listeners from all the sources */
+	cm_rtpbcast_stop_udp_relays(session, NULL);
 
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
@@ -1726,8 +1735,14 @@ static void *cm_rtpbcast_handler(void *data) {
 			int port[AV];
 			char *hostname[AV];
 
-			/* FIXME: maybe we should free resource if already there */
+			/* Remove all previous relays if any */
+			cm_rtpbcast_stop_udp_relays(session, NULL);
+
+			/* Create new array */
 			session->relay_udp_gateways = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_udp_relay_gateway*), nstreams);
+			/* FIXME this aint working, debug it, but not first priority
+			   TODO this causes a memory leak
+			g_array_set_clear_func(session->relay_udp_gateways, g_free); */
 
 #ifdef json_array_foreach
 			json_array_foreach(streams, i, v) {
@@ -1784,6 +1799,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				udp_gateway->audio = cm_rtpbcast_udp_client_create(hostname[AUDIO], port[AUDIO]);
 				udp_gateway->video = cm_rtpbcast_udp_client_create(hostname[VIDEO], port[VIDEO]);
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
+				udp_gateway->source = src;
 			}
 
 			/* Let's configure session with UDP relay type */
@@ -2930,14 +2946,21 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 			json_decref(event);
 			while(viewer) {
 				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
+				/* TODO: why don't we have a per-session mutex? */
 				if(session != NULL) {
 					session->stopping = TRUE;
 					session->started = FALSE;
 					session->paused = FALSE;
-					session->source = NULL;
-					/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
-					gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
-					gateway->close_pc(session->handle);
+					/* If the session was a watcher */
+					if (session->source) {
+						session->source = NULL;
+						/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
+						gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+						gateway->close_pc(session->handle);
+					}
+					/* If the session was a repeater. Note this removes session from listeners so
+					 * g_list_remove_all becomes a redundant call. */
+					cm_rtpbcast_stop_udp_relays(session, src); /* TODO: any kind of notification maybe? */
 				}
 				src->listeners = g_list_remove_all(src->listeners, session);
 				viewer = g_list_first(src->listeners);
@@ -2990,6 +3013,30 @@ void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
 	JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
 	g_free(event_text);
 }
+
+void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *session, cm_rtpbcast_rtp_source *srcmx) {
+	/* Check if we have udp relays to begin with */
+	if (!session->relay_udp_gateways)
+		return;
+
+	/* Remove ourselves from every source */
+	int i;
+	for (i = 0; i < session->relay_udp_gateways->len; i++) {
+		cm_rtpbcast_udp_relay_gateway *gw = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway *, i);
+
+		/* This function can be called from within mountpoint_destroy() which has a mutex locked over one source
+		 * so we check the argument here to prevent deadlocking */
+		if (srcmx != gw->source)
+			janus_mutex_lock(&gw->source->mutex);
+		gw->source->listeners = g_list_remove_all(gw->source->listeners, session);
+		if (srcmx != gw->source)
+			janus_mutex_unlock(&gw->source->mutex);
+	}
+
+	g_array_free(session->relay_udp_gateways, TRUE);
+	session->relay_udp_gateways = NULL;
+}
+
 
 void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc) {
 	JANUS_LOG(LOG_VERB, "Scheduling session 0x%x to switch to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(newsrc));
