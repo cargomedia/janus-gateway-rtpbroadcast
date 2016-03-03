@@ -242,6 +242,7 @@ static struct {
 	guint switching_delay;
 	guint session_info_update_time;
 	guint keyframe_distance_alert;
+	guint udp_relay_interval;
 	gboolean recording_enabled;
 } cm_rtpbcast_settings;
 
@@ -604,7 +605,7 @@ void *cm_rtpbcast_udp_relay_thread(void *data) {
 
 		/* FIXME add configuration option */
 		/* If we worked more than timeout, don't sleep. Otherwise sleep the remaining time */
-		gint64 to_sleep = 50000 - ms_worked;
+		gint64 to_sleep = cm_rtpbcast_settings.udp_relay_interval - ms_worked;
 		g_usleep(to_sleep > 0 ? to_sleep : 0);
 	}
 
@@ -741,6 +742,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.remb_avg_time = 3;
 	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.session_info_update_time = 10;
+	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
@@ -787,6 +789,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"switching_delay",
 				"session_info_update_time",
 				"keyframe_distance_alert",
+				"udp_relay_interval",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
@@ -798,6 +801,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
+				&cm_rtpbcast_settings.udp_relay_interval,
 			};
 
 			_foreach(i, ivars) {

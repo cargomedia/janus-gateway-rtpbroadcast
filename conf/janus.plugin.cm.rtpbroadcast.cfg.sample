@@ -13,6 +13,9 @@
 ; Session streams status update interval, seconds
 ; session_info_update_time = 10
 
+; Interval at which UDP relay thread should wake up and process the queue, microseconds
+; udp_relay_interval = 50000
+
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
