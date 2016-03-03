@@ -1778,7 +1778,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				cm_rtpbcast_udp_relay_gateway udp_gateway;
 				for (j = AUDIO; j <= VIDEO; j++)
 					udp_gateway.sockfd[j] = cm_rtpbcast_udp_client_create(hostname[j], port[j]);
-				udp_gateway->source = src;
+				udp_gateway.source = src;
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
 
 				/* All preparations are done, add the session to watchers */
@@ -3009,15 +3009,15 @@ void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *session, cm_rtpbcast_rtp_s
 	/* Remove ourselves from every source */
 	int i;
 	for (i = 0; i < session->relay_udp_gateways->len; i++) {
-		cm_rtpbcast_udp_relay_gateway *gw = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway *, i);
+		cm_rtpbcast_udp_relay_gateway gw = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway, i);
 
 		/* This function can be called from within mountpoint_destroy() which has a mutex locked over one source
 		 * so we check the argument here to prevent deadlocking */
-		if (srcmx != gw->source)
-			janus_mutex_lock(&gw->source->mutex);
-		gw->source->listeners = g_list_remove_all(gw->source->listeners, session);
-		if (srcmx != gw->source)
-			janus_mutex_unlock(&gw->source->mutex);
+		if (srcmx != gw.source)
+			janus_mutex_lock(&gw.source->mutex);
+		gw.source->listeners = g_list_remove_all(gw.source->listeners, session);
+		if (srcmx != gw.source)
+			janus_mutex_unlock(&gw.source->mutex);
 	}
 
 	g_array_free(session->relay_udp_gateways, TRUE);
