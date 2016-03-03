@@ -569,6 +569,8 @@ void *cm_rtpbcast_udp_relay_thread(void *data) {
 	GList *queue = NULL;
 
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
+		gint64 start = janus_get_monotonic_time();
+
 		janus_mutex_lock(&udp_relay_mutex);
 		queue = udp_relay_queue;
 		udp_relay_queue = NULL;
@@ -595,10 +597,15 @@ void *cm_rtpbcast_udp_relay_thread(void *data) {
 				queue = g_list_delete_link(queue, last);
 		}
 
-		JANUS_LOG(LOG_HUGE, "UDP:Relay: done, queue was %d, sent %d successfully.\n", n, success);
+		gint64 ms_worked = janus_get_monotonic_time() - start;
+		if (n > 0) {
+			JANUS_LOG(LOG_HUGE, "UDP:Relay: done, queue was %d, sent %d successfully, job time %d usec.\n", n, success, ms_worked);
+		}
 
-		/* FIXME add configuration option and sleep only the leftover time */
-		g_usleep(50000);
+		/* FIXME add configuration option */
+		/* If we worked more than timeout, don't sleep. Otherwise sleep the remaining time */
+		gint64 to_sleep = 50000 - ms_worked;
+		g_usleep(to_sleep > 0 ? to_sleep : 0);
 	}
 
 	/* FIXME: should we bother removing the queue too? */
