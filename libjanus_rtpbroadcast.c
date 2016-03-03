@@ -422,8 +422,6 @@ typedef struct cm_rtpbcast_udp_relay_gateway {
 	cm_rtpbcast_rtp_source *source;
 } cm_rtpbcast_udp_relay_gateway;
 
-#define RELAY_WEBRTC 0
-#define RELAY_UDP 1
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
@@ -438,8 +436,6 @@ typedef struct cm_rtpbcast_session {
 	guint64 last_switch;
 	gboolean autoswitch;
 
-	/* Mode of packets relay: RELAY_WEBRTC, RELAY_UDP */
-	gint relay_type;
 	GArray *relay_udp_gateways; /*cm_rtpbcast_udp_relay_gateway*/
 
 	gboolean started;
@@ -901,7 +897,6 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 	session->autoswitch = TRUE;
-	session->relay_type = RELAY_WEBRTC;
 	session->relay_udp_gateways = NULL;
 	session->super_user = FALSE;
 	janus_mutex_init(&session->mutex);
@@ -1684,9 +1679,6 @@ static void *cm_rtpbcast_handler(void *data) {
 				}
 			}
 
-			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
-			session->relay_type = RELAY_WEBRTC;
-
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
@@ -1805,8 +1797,6 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Let's configure session with UDP relay type */
 			session->started = TRUE;
 			session->stopping = FALSE;
-			/* FIXME: Make sure that we are in single mode or RELAY_WEBRTC or RELAY_UDP*/
-			session->relay_type = RELAY_UDP;
 
 			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
@@ -2557,13 +2547,13 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	packet->data->timestamp = htonl(session->context.last_ts[j]);
 	packet->data->seq_number = htons(session->context.last_seq[j]);
 
-	if (session->relay_type == RELAY_WEBRTC) {
+	if (session->source) {
 		if(gateway != NULL) {
 			gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
 		}
 	}
 
-	if (session->relay_type == RELAY_UDP) {
+	if (session->relay_udp_gateways) {
 		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->source_index, packet->is_video, (char *)packet->data, packet->length);
 	}
 
