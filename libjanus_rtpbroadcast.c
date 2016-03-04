@@ -242,6 +242,10 @@ static struct {
 	guint session_info_update_time;
 	guint keyframe_distance_alert;
 	gboolean recording_enabled;
+	gboolean simulate_bad_connection;
+	guint packet_loss_rate;
+	guint packet_mean_delay;
+	guint packet_delay_variance;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -659,6 +663,10 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 	cm_rtpbcast_settings.recording_enabled = TRUE;
+	cm_rtpbcast_settings.simulate_bad_connection = FALSE;
+	cm_rtpbcast_settings.packet_loss_rate = 0;
+	cm_rtpbcast_settings.packet_mean_delay = 0;
+	cm_rtpbcast_settings.packet_delay_variance = 0;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -671,10 +679,12 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		/* Boolean */
 		{
 			const char *inames [] = {
-				"recording_enabled"
+				"recording_enabled",
+				"simulate_bad_connection",
 			};
-			guint *ivars [] = {
+			gboolean *ivars [] = {
 				&cm_rtpbcast_settings.recording_enabled,
+				&cm_rtpbcast_settings.simulate_bad_connection,
 			};
 
 			_foreach(i, ivars) {
@@ -696,6 +706,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"switching_delay",
 				"session_info_update_time",
 				"keyframe_distance_alert",
+				"packet_loss_rate",
+				"packet_mean_delay",
+				"packet_delay_variance",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
@@ -707,6 +720,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
+				&cm_rtpbcast_settings.packet_loss_rate,
+				&cm_rtpbcast_settings.packet_mean_delay,
+				&cm_rtpbcast_settings.packet_delay_variance,
 			};
 
 			_foreach(i, ivars) {
