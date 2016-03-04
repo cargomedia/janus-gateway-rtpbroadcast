@@ -2680,7 +2680,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		source_bw = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
 
-		if (!best_remb || (best_bw < source_remb && source_bw < remb )) {
+		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
 			best_src = src;
 			best_bw = source_bw;
 		}
