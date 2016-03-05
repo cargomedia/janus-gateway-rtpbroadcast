@@ -2270,6 +2270,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	cm_rtpbcast_rtp_relay_packet packet;
 
 	packet.source_index = nstream;
+	cm_rtpbcast_stats_restart(&source->stats);
 
 	while(!g_atomic_int_get(&stopping) && !mountpoint->destroyed) {
 		/* Wait for some data */
