@@ -57,7 +57,7 @@
 ; simulate_bad_connection = yes
 
 ; Packet loss percentage
-; packet_loss_rate = 30
+; packet_loss_rate = 5
 
 ; Packet mean delay, usec
 ; packet_mean_delay = 10

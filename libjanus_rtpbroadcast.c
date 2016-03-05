@@ -2304,6 +2304,19 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				}
 				addrlen = sizeof(remote);
 				bytes = recvfrom(source->fd[j], buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
+
+				/* Bad connection simulation */
+				if (cm_rtpbcast_settings.simulate_bad_connection) {
+					/* Throw a dice if the packet should be just ignored */
+					if (cm_rtpbcast_settings.packet_loss_rate > g_random_int_range(1,101)) {
+						JANUS_LOG(LOG_VERB, "[%s] Discarding packet for bad connection simulation.\n", mountpoint->name);
+						continue;
+					}
+
+					/* Retransmit the packet to ourselves with a delay */
+					/* TODO */
+				}
+
 				/* Note we only update stats for legitimate packets */
 				if(source->mp && source->mp->whitelisted &&
 					memcmp(&remote.sin_addr.s_addr, &source->mp->allowed_ip.s_addr, sizeof(in_addr_t)) != 0) {
