@@ -2673,16 +2673,20 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 	   no such source found */
-	guint i = 0; cm_rtpbcast_rtp_source *src; guint64 source_remb;
-	guint s_count = sources->len;
-	do {
+	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
+	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats.stat_mutex);
-		source_remb = (guint64)src->stats.avg;
+		source_bw = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
-	} while (i < s_count && remb < source_remb);
 
-	return src;
+		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
+			best_src = src;
+			best_bw = source_bw;
+		}
+	}
+
+	return best_src;
 }
 
 void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
