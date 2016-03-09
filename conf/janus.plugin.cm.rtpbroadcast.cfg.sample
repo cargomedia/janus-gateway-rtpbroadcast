@@ -13,6 +13,10 @@
 ; Session streams status update interval, seconds
 ; session_info_update_time = 10
 
+; UDP queuing allows to pool up packets and send them from separate threads
+; Alternative is sending the packets from the thread they are received from
+; udp_relay_queue_enabled = no
+
 ; Interval at which UDP relay thread should wake up and process the queue, microseconds
 ; udp_relay_interval = 50000
 

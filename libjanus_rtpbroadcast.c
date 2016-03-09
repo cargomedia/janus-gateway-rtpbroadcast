@@ -244,6 +244,7 @@ static struct {
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
 	gboolean recording_enabled;
+	gboolean udp_relay_queue_enabled;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -416,6 +417,7 @@ typedef struct cm_rtpbcast_udp_relay_gateway {
 	cm_rtpbcast_rtp_source *source;
 	struct sockaddr_in sin[AV];
 	gboolean valid[AV];
+	int fd;
 } cm_rtpbcast_udp_relay_gateway;
 
 gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin);
@@ -752,6 +754,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 	cm_rtpbcast_settings.recording_enabled = TRUE;
+	cm_rtpbcast_settings.udp_relay_queue_enabled = FALSE;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -764,10 +767,12 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		/* Boolean */
 		{
 			const char *inames [] = {
-				"recording_enabled"
+				"recording_enabled",
+				"udp_relay_queue_enabled",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.recording_enabled,
+				&cm_rtpbcast_settings.udp_relay_queue_enabled,
 			};
 
 			_foreach(i, ivars) {
@@ -872,11 +877,13 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Start the UDP relay thread */
 	janus_mutex_init(&udp_relay_mutex);
 	udp_relay_queue = NULL;
-  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
-	if(!udp_relay) {
-		g_atomic_int_set(&initialized, 0);
-		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
-		return -1;
+	if (cm_rtpbcast_settings.udp_relay_queue_enabled) {
+	  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
+		if(!udp_relay) {
+			g_atomic_int_set(&initialized, 0);
+			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
+			return -1;
+		}
 	}
 	/* Launch the thread that will handle incoming messages */
 	handler_thread = g_thread_try_new("janus rtpbroadcast handler", cm_rtpbcast_handler, NULL, &error);
@@ -1890,6 +1897,17 @@ static void *cm_rtpbcast_handler(void *data) {
 					}
 				}
 				udp_gateway.source = src;
+
+				/* If we don't need queues, then create a fd */
+				if (!cm_rtpbcast_settings.udp_relay_queue_enabled) {
+					if ((udp_gateway.fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot create socket! Reason: %s\n", strerror(errno));
+						udp_gateway.valid[j] = FALSE; // TODO proper error reporting
+					}
+				}
+				else
+					udp_gateway.fd = -1;
+
 				g_array_append_val(session->relay_udp_gateways, udp_gateway);
 
 				/* All preparations are done, add the session to watchers */
@@ -2596,7 +2614,11 @@ int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int sourc
 			cm_rtpbcast_udp_relay_gateway gateway = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway , source_index);
 
 			if (gateway.valid[isvideo]) {
-				cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
+				if (cm_rtpbcast_settings.udp_relay_queue_enabled)
+					cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
+				else
+				  if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
+						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
 				return 1;
 			}
 			else return 0;
@@ -3113,6 +3135,12 @@ void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *session, cm_rtpbcast_rtp_s
 		gw.source->listeners = g_list_remove_all(gw.source->listeners, session);
 		if (srcmx != gw.source)
 			janus_mutex_unlock(&gw.source->mutex);
+
+		/* If we had a fd open close it */
+		if (gw.fd >= 0) {
+			close(gw.fd);
+			gw.fd = -1;
+		}
 	}
 
 	g_array_free(session->relay_udp_gateways, TRUE);
