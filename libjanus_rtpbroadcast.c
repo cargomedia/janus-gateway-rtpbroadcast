@@ -339,7 +339,7 @@ static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
 json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session);
 json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session);
 json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session);
-json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -1157,12 +1157,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		session->super_user = json_is_true(value);
+		gboolean su = json_is_true(value);
 
-		if (session->super_user) {
-			super_sessions = g_list_prepend(super_sessions, session);
-		} else {
-			super_sessions = g_list_remove_all(super_sessions, session);
+		if (session->super_user != su) {
+			if (su) {
+				super_sessions = g_list_prepend(super_sessions, session);
+			} else {
+				super_sessions = g_list_remove_all(super_sessions, session);
+			}
+			session->super_user = su;
 		}
 
 		response = json_object();
@@ -1181,7 +1184,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("list"));
-		json_object_set_new(response, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(response, "list", cm_rtpbcast_mountpoints_to_json(session));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "create")) {
 		/* Create a new stream */
@@ -1381,7 +1384,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_t *result = json_object();
 		json_object_set_new(event, "streaming", json_string("event"));
 		json_object_set_new(result, "event", json_string("mountpoints-info"));
-		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(session));
 		json_object_set_new(event, "result", result);
 		cm_rtpbcast_notify_supers(event);
 
@@ -1423,7 +1426,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_t *result = json_object();
 		json_object_set_new(event, "streaming", json_string("event"));
 		json_object_set_new(result, "event", json_string("mountpoints-info"));
-		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(mountpoints, session));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(session));
 		json_object_set_new(event, "result", result);
 		cm_rtpbcast_notify_supers(event);
 
@@ -3244,7 +3247,7 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 	}
 }
 
-json_t *cm_rtpbcast_mountpoints_to_json(GHashTable *mountpoints, cm_rtpbcast_session *session) {
+json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session) {
 	json_t *mps = json_array();
 	janus_mutex_unlock(&mountpoints_mutex);
 	GHashTableIter iter;
