@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Read Janus log from standard input and produce CSV file for R to analyze
+echo '"queue_len","sent_pks","worktime"'
+
+sed -ne 's/^.*queue was \([0-9]*\), sent \([0-9]*\) successfully, job time \([0-9]*\) usec.*$/\1,\2,\3/gp'

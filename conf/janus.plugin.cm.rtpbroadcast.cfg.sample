@@ -10,6 +10,16 @@
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Session streams status update interval, seconds
+; session_info_update_time = 10
+
+; UDP queuing allows to pool up packets and send them from separate threads
+; Alternative is sending the packets from the thread they are received from
+; udp_relay_queue_enabled = no
+
+; Interval at which UDP relay thread should wake up and process the queue, microseconds
+; udp_relay_interval = 50000
+
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
@@ -25,6 +35,9 @@
 ; #{md5}      is md5 of (timestamp + plugin name + random integer)
 ; #{plugin}   is plugin name ("janus.plugin.cm.rtpbroadcast")
 ; job_pattern = job-#{md5}
+
+; Enable auto recording and thumbnailing
+; recording_enabled = yes
 
 ; Path for recording and thumbnailing
 ; archive_path = /tmp/recordings"

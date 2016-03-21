@@ -22,6 +22,10 @@ Main extensions:
 - automatically records the first provided stream (per mountpoint) into configurable archives
 - dumps stream RTP payload into configurable thumbnailer archives
 - creates job files and store events like new `archive-finished` or `thumbnailing-finished`
+- introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
+- introduces `switch-source` end point for switching the stream in the mountpoint
+- introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
+- introduces `superuser` end point which upgrades/downgrades session for receiving detailed admin info
 
 Configuration
 -------------
@@ -38,6 +42,9 @@ Configuration
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; Session streams status update interval, seconds
+; session_info_update_time = 10
+
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
@@ -53,6 +60,9 @@ Configuration
 ; #{md5}      is md5 of (timestamp + plugin name + random integer)
 ; #{plugin}   is plugin name ("janus.plugin.cm.rtpbroadcast")
 ; job_pattern = job-#{md5}
+
+; Enable auto recording and thumbnailing
+; recording_enabled = yes
 
 ; Path for recording and thumbnailing
 ; archive_path = /tmp/recordings"
@@ -74,9 +84,65 @@ Configuration
 ; thumbnailing_duration = 10
 ```
 
+#### Stream definition for responses
+The response for multiple actions contains the `stream-definition` like follows:
+
+```json
+{
+   "id": "<string>",
+   "uid": "<string>",
+   "index": "<int>",
+   "audioport": "<int>",
+   "videoport": "<int>",
+   "listeners": "<int>",
+   "waiters": "<int>",
+   "stats": {
+      "min": "<float>",
+      "max": "<float>",
+      "cur": "<float>",
+      "avg": "<float>"
+   },
+   "frame": {
+      "width": "<int>",
+      "height": "<int>",
+      "fps": "<int>",
+      "key-distance": "<int>"
+   },
+   "session": {
+      "webrtc-active": "<boolean>",
+      "autoswitch-enabled": "<boolean>",
+      "remb-avg": "<int>"
+   }
+}
+```
+
+- `id` is the mountpoint identification
+- `index` is position of stream in the mountpoint/streams array
+- `session` is set only for `list` action and reference to current connection/session.
+
+#### Mountpoint definition for responses
+The response for multiple actions contains the `mountpoint-definition` like follows:
+
+```json
+{
+  "id": "<string>",
+  "uid": "<string>",
+  "name": "<string>",
+  "description": "<string>",
+  "enabled": "<boolean>",
+  "recorded": "<boolean>",
+  "whitelisted": "<boolean>",
+  "streams": [
+    "<stream-definition-1>",
+    "<stream-definition-2>",
+    "<stream-definition-N>",
+  ]
+}
+```
+
 Synchronous actions
 -------------------
-It supports `create`, `destroy` actions and drops support for `recording` action.
+It supports `create`, `destroy` actions and drops support for `recording` action. It extends `list` action with new features. 
 
 #### `create`
 
@@ -106,14 +172,17 @@ It responses with auto generated port number for audio and video using `minport`
 {
   "streaming": "created",
   "created": "<string>",
-  "id": "<string>",
-  "description": "<string>",
-  "streams": [
-    {
-      "audioport": "<int>",
-      "videoport": "<int>",
-    }
-  ]
+  "stream": {
+    "id": "<string>",
+    "uid": "<string>",
+    "description": "<string>",
+    "streams": [
+      {
+        "audioport": "<int>",
+        "videoport": "<int>",
+      }
+    ]
+  }
 }
 ```
 
@@ -135,44 +204,8 @@ It responses with auto generated port number for audio and video using `minport`
 }
 ```
 
-Asychronous actions
--------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It extends `list` action with new features, changes
-`watch` action and introduces new `switch-source` action.
-
-##### Stream definition for responses
-The response for multiple actions contains the `stream-definition` like follows:
-
-```json
-{
-   "id": "<string>",
-   "index": "<int>",
-   "audioport": "<int>",
-   "videoport": "<int>",
-   "stats": {
-      "min": "<float>",
-      "max": "<float>",
-      "cur": "<float>",
-      "avg": "<float>"
-   },
-   "frame": {
-      "width": "<int>",
-      "height": "<int>",
-      "fps": "<int>",
-      "key-distance": "<int>"
-   },
-   "session": {
-      "webrtc-active": "<boolean>"
-   }
-}
-```
-
-- `id` is the mountpoint identification
-- `index` is position of stream in the mountpoint/streams array
-- `session` is set only for `list` action and reference to current connection/session.
-
 #### `list`
-It return mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints.
+It returns mountpoint with specific `id`. If `id` is not provided it return all existing mountpoints.
 
 **Request**:
 ```json
@@ -183,18 +216,38 @@ It return mountpoint with specific `id`. If `id` is not provided it return all e
 
 **Response**:
 ```json
-[
-  {
-     "id": "<string>",
-     "name": "<string>",
-     "description": "<string>",
-     "streams": [
-        "<stream-definition-1>",
-        "<stream-definition-2>",
-        "<stream-definition-N>"
-     ]
-  }
-]
+{
+  "streaming": "list",
+  "list": [
+    {
+       "id": "<string>",
+       "uid": "<string>",
+       "name": "<string>",
+       "description": "<string>",
+       "streams": [
+          "<stream-definition-1>",
+          "<stream-definition-2>",
+          "<stream-definition-N>"
+       ]
+    }
+  ]
+}
+```
+
+Asychronous actions
+-------------------
+It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It changes `watch` action and introduces new 
+`switch-source` action.
+
+Asynchronous action gets janus `ack` response for request and then receives `event` with plugin response.
+
+**Response**
+```json
+{
+  "janus": "ack",
+  "session_id": "<int>",
+  "transaction": "<string>"
+}
 ```
 
 #### `watch`
@@ -207,7 +260,38 @@ It will pick up first stream from the mountpoint list and assigns to the user se
 }
 ```
 
-**Response**:
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "preparing",
+    "stream": "<stream-definition>"
+  }
+}
+```
+
+#### `watch-udp`
+It allows to relay incoming `UDP` traffic as `UDP` without any conversion. In general it forwards packets from the `UDP` server to the `UDP` client.
+This request has to provide a full destination list for all streams defined by mountpoint. It will link the current list of streams with new
+destination list by index/position of the stream in the array.
+
+**Request**:
+```json
+{
+  "id": "<string>",
+  "streams": [
+    {
+      "audioport": "<integer>",
+      "audiohost": "<string>",
+      "videoport": "<integer>",
+      "videohost": "<string>",
+    }
+  ],
+}
+```
+
+**Event**:
 ```json
 {
   "streaming": "event",
@@ -227,7 +311,7 @@ It will switch the mountpoint for the session. By default will pick up first str
 }
 ```
 
-**Response**:
+**Event**:
 ```json
 {
   "streaming": "event",
@@ -250,7 +334,7 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 }
 ```
 
-**Response**:
+**Event**:
 ```json
 {
   "streaming": "event",
@@ -264,6 +348,24 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 
 `next` source definition is not available if `autoswitch` is set to `true`.
 
+#### `superuser`
+By passing `true` it upgrades current session into super user session and downgrade into regular one by passing `false`.
+
+**Request**:
+```json
+{
+  "enabled": "<boolean>"
+}
+```
+
+**Event**:
+```json
+{
+  "streaming": "superuser",
+  "enabled": 1
+}
+```
+
 #### `stop`, `start`, `pause`
 Events has the same bahaviour as native `janus/streaming` plugin.
 
@@ -276,6 +378,8 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 {
     "data": {
         "id": "<string>",
+        "uid": "<string>",
+        "createdAt": "<int>",
         "video": "<archive_path/recording_pattern>.mjr",
         "audio": "<archive_path/recording_pattern>.mjr"
     },
@@ -291,6 +395,8 @@ Thumbnailer creates archives of configurable duration for configurable interval 
 {
     "data": {
         "id": "<string>",
+        "uid": "<string>",
+        "createdAt": "<int>",
         "thumb": "<archive_path/thumbnailing_pattern>.mjr"
     },
     "plugin": "janus.plugin.cm.rtpbroadcast",
@@ -321,6 +427,43 @@ If scheduled task is executed the subscriber receives media event:
     "event": "changed",
     "current": "<stream-definition>",
     "previous": "<stream-definition>"
+  }
+}
+```
+
+#### Mountpoint information event
+It sends updates with current state of mountpoint which is watched by session. `mountpoint-info` event contains current state of `sources` and configuration 
+used for calculating statistics.
+```json
+{
+  "streaming": "event",
+  "result": {
+    "event": "mountpoint-info",
+    "streams": [
+      "<stream-definition-1>",
+      "<stream-definition-2>",
+      "<stream-definition-N>",
+    ],
+    "config": {
+      "source_avg_duration": "<int>",
+      "remb_avg_duration": "<int>"
+    }
+  }
+}
+```
+
+#### Mountpoints information event
+It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
+```json
+{
+  "streaming": "event",
+  "result": {
+    "event": "mountpoints-info",
+    "list": [
+      "<mountpoint-definition-1>",
+      "<mountpoint-definition-2>",
+      "<mountpoint-definition-N>",
+    ],
   }
 }
 ```

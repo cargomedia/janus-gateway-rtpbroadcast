@@ -118,6 +118,16 @@ url = RTSP stream URL (only if type=rtsp)
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+
 #include "janus/debug.h"
 #include "janus/apierror.h"
 #include "janus/config.h"
@@ -192,6 +202,7 @@ static volatile gint initialized = 0, stopping = 0;
 static janus_callbacks *gateway = NULL;
 static GThread *handler_thread;
 static GThread *watchdog;
+static GThread *udp_relay;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
@@ -229,7 +240,11 @@ static struct {
 	guint source_avg_time;
 	guint remb_avg_time;
 	guint switching_delay;
+	guint session_info_update_time;
 	guint keyframe_distance_alert;
+	guint udp_relay_interval;
+	gboolean recording_enabled;
+	gboolean udp_relay_queue_enabled;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -259,6 +274,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, int);
 typedef struct cm_rtpbcast_session cm_rtpbcast_session;
 typedef struct cm_rtpbcast_mountpoint {
 	char *id;
+	char *uid;
 	char *name;
 	char *description;
 
@@ -320,7 +336,10 @@ static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_
 static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
 static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
 static void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src);
-json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src);
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session);
+json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session);
 
 /* The idea is, keep pointers to sources in hash table and keep track of
 	 available ports in the shuffled list. When a port is fred, it is inserted
@@ -394,10 +413,20 @@ typedef struct cm_rtpbcast_context {
 	uint16_t last_seq[AV], base_seq[AV], base_seq_prev[AV];
 } cm_rtpbcast_context;
 
+typedef struct cm_rtpbcast_udp_relay_gateway {
+	cm_rtpbcast_rtp_source *source;
+	struct sockaddr_in sin[AV];
+	gboolean valid[AV];
+	int fd;
+} cm_rtpbcast_udp_relay_gateway;
+
+gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin);
+
 typedef struct cm_rtpbcast_session {
 	janus_plugin_session *handle;
 	cm_rtpbcast_rtp_source *source;
 	cm_rtpbcast_rtp_source *nextsource; /* Source to switch after a keyframe */
+	gboolean super_user;
 
 	/* REMB and auxillary vars for math */
 	guint64 remb;
@@ -406,6 +435,8 @@ typedef struct cm_rtpbcast_session {
 	guint rembcount;
 	guint64 last_switch;
 	gboolean autoswitch;
+
+	GArray *relay_udp_gateways; /*cm_rtpbcast_udp_relay_gateway*/
 
 	gboolean started;
 	gboolean paused;
@@ -419,14 +450,21 @@ typedef struct cm_rtpbcast_session {
 } cm_rtpbcast_session;
 static GHashTable *sessions;
 static GList *old_sessions;
+static GList *super_sessions;
 static janus_mutex sessions_mutex;
 static void cm_rtpbcast_store_event(json_t* , const char *);
+static void cm_rtpbcast_notify_supers(json_t*);
+static void cm_rtpbcast_notify_session(gpointer, gpointer);
+/* Stops UDP relays for the given session. Second parameter specifies the source pointer
+ * which has a mutex locked within current context and thus doesn't need locking */
+static void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *, cm_rtpbcast_rtp_source *);
 
 /* Packets we get from gstreamer and relay */
 typedef struct cm_rtpbcast_rtp_relay_packet {
 	rtp_header *data;
 	gint length;
 	gint is_video;
+	guint source_index;
 	uint32_t timestamp;
 	uint16_t seq_number;
 } cm_rtpbcast_rtp_relay_packet;
@@ -490,12 +528,101 @@ typedef struct cm_rtp_header_vp8
 #define CM_RTPBCAST_ERROR_CANT_SWITCH					458
 #define CM_RTPBCAST_ERROR_UNKNOWN_ERROR				470
 
+/* UDP relay queue */
+typedef struct cm_rtpbcast_udp_relay_queue_node {
+	void *data;
+	guint len;
+	struct sockaddr_in dst;
+} cm_rtpbcast_udp_relay_queue_node;
+
+GList* /* cm_rtpbcast_udp_relay_queue_node* */ udp_relay_queue;
+janus_mutex udp_relay_mutex;
+
+/* Puts a packet in the queue */
+void cm_rtpbcast_udp_enqueue(void *data, guint len, struct sockaddr_in *dst) {
+	/* Copy data over */
+	cm_rtpbcast_udp_relay_queue_node *nd = g_malloc0(sizeof(cm_rtpbcast_udp_relay_queue_node));
+	nd->len = len;
+	nd->data = g_malloc0(len);
+	memcpy(nd->data, data, len);
+	memcpy(&nd->dst, dst, sizeof(struct sockaddr_in));
+
+	/* Note this adds element from the front. Relay thread reverses the list.
+	 * Also relay thread deallocates memory. */
+	janus_mutex_lock(&udp_relay_mutex);
+	udp_relay_queue = g_list_prepend(udp_relay_queue, nd);
+	janus_mutex_unlock(&udp_relay_mutex);
+}
+
+/* FIXME: what to do if socket() fails and thread exists? */
+void *cm_rtpbcast_udp_relay_thread(void *data) {
+	JANUS_LOG(LOG_INFO, "UDP:Relay: thread started\n");
+
+	/* As frugal as we are, only one socket for all the UDP */
+	int fd;
+	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+		JANUS_LOG(LOG_ERR, "UDP:Relay: cannot create socket! Reason: %s\n", strerror(errno));
+		return NULL;
+	}
+
+	/* On timer event, thread swaps udp_relay_queue with this one */
+	/* @landswellsong: currently it just creates a fresh list each round. Maybe
+	 * there is some rationale to send only certain amount of packets and
+	 * swap queues? I can't tell upfront where the bottleneck is. */
+	GList *queue = NULL;
+
+	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
+		gint64 start = janus_get_monotonic_time();
+
+		janus_mutex_lock(&udp_relay_mutex);
+		queue = udp_relay_queue;
+		udp_relay_queue = NULL;
+		janus_mutex_unlock(&udp_relay_mutex);
+
+		/* Elements are prepended for performance, traverse from the back */
+		guint n = 0, success = 0;
+		while (queue) {
+				GList *last = g_list_last(queue);
+				cm_rtpbcast_udp_relay_queue_node *nd = last->data;
+
+				/* Send the packet */
+				n++;
+				if (sendto(fd, nd->data, nd->len, 0, (struct sockaddr *) &nd->dst, sizeof(struct sockaddr_in)) == -1)
+					JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
+				else
+					success++;
+
+				/* Deallocate stuff */
+				g_free(nd->data);
+				g_free(nd);
+
+				/* Remove the last one */
+				queue = g_list_delete_link(queue, last);
+		}
+
+		gint64 ms_worked = janus_get_monotonic_time() - start;
+		if (n > 0) {
+			JANUS_LOG(LOG_HUGE, "UDP:Relay: done, queue was %d, sent %d successfully, job time %d usec.\n", n, success, ms_worked);
+		}
+
+		/* FIXME add configuration option */
+		/* If we worked more than timeout, don't sleep. Otherwise sleep the remaining time */
+		gint64 to_sleep = cm_rtpbcast_settings.udp_relay_interval - ms_worked;
+		g_usleep(to_sleep > 0 ? to_sleep : 0);
+	}
+
+	/* FIXME: should we bother removing the queue too? */
+	close(fd);
+
+	return NULL;
+}
 
 /* Streaming watchdog/garbage collector (sort of) */
 void *cm_rtpbcast_watchdog(void *data);
 void *cm_rtpbcast_watchdog(void *data) {
 	JANUS_LOG(LOG_INFO, "CM RTP Broadcast watchdog started\n");
 	gint64 now = 0;
+	gint64 session_update = 0;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
 		janus_mutex_lock(&sessions_mutex);
 		/* Iterate on all the sessions */
@@ -523,6 +650,41 @@ void *cm_rtpbcast_watchdog(void *data) {
 				sl = sl->next;
 			}
 		}
+
+		if (now-session_update >= cm_rtpbcast_settings.session_info_update_time * G_USEC_PER_SEC) {
+			if(sessions && g_hash_table_size(sessions) > 0) {
+				GHashTableIter iter;
+				gpointer value;
+				g_hash_table_iter_init(&iter, sessions);
+				while (g_hash_table_iter_next(&iter, NULL, &value)) {
+					cm_rtpbcast_session *session = (cm_rtpbcast_session *) value;
+					if (!session || session->stopping || session->paused) {
+						continue;
+					}
+					if (session->source != NULL) {
+						json_t *event = json_object();
+						json_t *result = json_object();
+
+						json_object_set_new(event, "streaming", json_string("event"));
+						json_object_set_new(result, "event", json_string("mountpoint-info"));
+
+						json_t *st = cm_rtpbcast_sources_to_json(session->source->mp->sources, session);
+						json_object_set_new(result, "streams", st);
+
+						json_t *config = json_object();
+						json_object_set_new(config, "source_avg_duration", json_integer(cm_rtpbcast_settings.source_avg_time));
+						json_object_set_new(config, "remb_avg_duration", json_integer(cm_rtpbcast_settings.remb_avg_time));
+						json_object_set_new(result, "config", config);
+
+						json_object_set_new(event, "result", result);
+						char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+						gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+					}
+				}
+			}
+			session_update = janus_get_monotonic_time();
+		}
+
 		janus_mutex_unlock(&sessions_mutex);
 		janus_mutex_lock(&mountpoints_mutex);
 		/* Iterate on all the mountpoints */
@@ -581,6 +743,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.source_avg_time = 10;
 	cm_rtpbcast_settings.remb_avg_time = 3;
 	cm_rtpbcast_settings.switching_delay = 1;
+	cm_rtpbcast_settings.session_info_update_time = 10;
+	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
@@ -589,6 +753,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
+	cm_rtpbcast_settings.recording_enabled = TRUE;
+	cm_rtpbcast_settings.udp_relay_queue_enabled = FALSE;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -598,6 +764,24 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	janus_mutex_init(&mountpoints_mutex);
 	/* Parse configuration to populate the mountpoints */
 	if(config != NULL) {
+		/* Boolean */
+		{
+			const char *inames [] = {
+				"recording_enabled",
+				"udp_relay_queue_enabled",
+			};
+			guint *ivars [] = {
+				&cm_rtpbcast_settings.recording_enabled,
+				&cm_rtpbcast_settings.udp_relay_queue_enabled,
+			};
+
+			_foreach(i, ivars) {
+				janus_config_item *itm = janus_config_get_item_drilldown(config, "general", inames[i]);
+				if (itm && itm->value) {
+					*ivars[i] = janus_is_true(itm->value);
+				}
+			}
+		}
 		/* Integers */
 		{
 			const char *inames [] = {
@@ -608,7 +792,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"source_avg_time",
 				"remb_avg_time",
 				"switching_delay",
+				"session_info_update_time",
 				"keyframe_distance_alert",
+				"udp_relay_interval",
 			};
 			guint *ivars [] = {
 				&cm_rtpbcast_settings.minport,
@@ -618,7 +804,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.source_avg_time,
 				&cm_rtpbcast_settings.remb_avg_time,
 				&cm_rtpbcast_settings.switching_delay,
+				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
+				&cm_rtpbcast_settings.udp_relay_interval,
 			};
 
 			_foreach(i, ivars) {
@@ -671,6 +859,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
+	super_sessions = NULL;
 	janus_mutex_init(&sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) cm_rtpbcast_message_free);
 	/* This is the callback we'll need to invoke to contact the gateway */
@@ -684,6 +873,17 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		g_atomic_int_set(&initialized, 0);
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast watchdog thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
+	}
+	/* Start the UDP relay thread */
+	janus_mutex_init(&udp_relay_mutex);
+	udp_relay_queue = NULL;
+	if (cm_rtpbcast_settings.udp_relay_queue_enabled) {
+	  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
+		if(!udp_relay) {
+			g_atomic_int_set(&initialized, 0);
+			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
+			return -1;
+		}
 	}
 	/* Launch the thread that will handle incoming messages */
 	handler_thread = g_thread_try_new("janus rtpbroadcast handler", cm_rtpbcast_handler, NULL, &error);
@@ -783,7 +983,9 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 		*error = -1;
 		return;
 	}
+
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)g_malloc0(sizeof(cm_rtpbcast_session));
+
 	if(session == NULL) {
 		JANUS_LOG(LOG_FATAL, "Memory error!\n");
 		*error = -2;
@@ -799,6 +1001,8 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 	session->autoswitch = TRUE;
+	session->relay_udp_gateways = NULL;
+	session->super_user = FALSE;
 	janus_mutex_init(&session->mutex);
 
 	g_atomic_int_set(&session->hangingup, 0);
@@ -822,11 +1026,16 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		return;
 	}
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
+	/* If session is watching something, remove it from listeners */
+	/* TODO: abstract "attach to source" and "remove from source" with a special func
+	 * also see below at cm_rtpbcast_stop_udp_relays() for example */
 	if(session->source) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+	/* If the session is relaying UDP, also remove listeners from all the sources */
+	cm_rtpbcast_stop_udp_relays(session, NULL);
 
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
@@ -837,6 +1046,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
 		g_hash_table_remove(sessions, handle);
+		super_sessions = g_list_remove_all(super_sessions, session);
 		/* Cleaning up and removing the session is done in a lazy way */
 		old_sessions = g_list_append(old_sessions, session);
 	}
@@ -931,7 +1141,38 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 	}
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
-	if(!strcasecmp(request_text, "list")) {
+	if(!strcasecmp(request_text, "superuser")) {
+		/* TODO @landswellsong layer authentication over that */
+		json_t *value = json_object_get(root, "enabled");
+		if(!value) {
+			JANUS_LOG(LOG_ERR, "Missing element (value)\n");
+			error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+			g_snprintf(error_cause, 512, "Missing element (value)");
+			goto error;
+		}
+		if(!json_is_boolean(value)) {
+			JANUS_LOG(LOG_ERR, "Invalid element (value should be boolean)\n");
+			error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+			g_snprintf(error_cause, 512, "Invalid element (value should be boolean)");
+			goto error;
+		}
+
+		gboolean su = json_is_true(value);
+
+		if (session->super_user != su) {
+			if (su) {
+				super_sessions = g_list_prepend(super_sessions, session);
+			} else {
+				super_sessions = g_list_remove_all(super_sessions, session);
+			}
+			session->super_user = su;
+		}
+
+		response = json_object();
+		json_object_set_new(response, "streaming", json_string("superuser"));
+		json_object_set_new(response, "enabled", json_integer(session->super_user));
+		goto plugin_response;
+	} else if(!strcasecmp(request_text, "list")) {
 		json_t *id = json_object_get(root, "id");
 		if(id && !json_is_string(id) < 0) {
 			JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
@@ -940,48 +1181,10 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 
-		json_t *list = json_array();
-		JANUS_LOG(LOG_VERB, "Request for the list of mountpoints\n");
-		/* Return a list of all available mountpoints */
-		janus_mutex_lock(&mountpoints_mutex);
-		GHashTableIter iter;
-		gpointer value;
-		g_hash_table_iter_init(&iter, mountpoints);
-		while (g_hash_table_iter_next(&iter, NULL, &value)) {
-			cm_rtpbcast_mountpoint *mp = value;
-
-			/* If id is given, skip others */
-			/* TODO: @landswellsong refactor this without a loop */
-			if (id && strcmp(json_string_value(id), mp->id) != 0)
-				continue;
-
-			json_t *ml = json_object();
-			json_object_set_new(ml, "id", json_string(mp->id));
-			json_object_set_new(ml, "name", json_string(mp->name));
-			json_object_set_new(ml, "description", json_string(mp->description));
-			/* json_object_set_new(ml, "streamcount", json_integer(mp->sources->len)); */
-			json_t *st = json_array();
-			guint i;
-			for (i = 0; i < mp->sources->len; i++) {
-
-				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i);
-
-				json_t *v = cm_rtpbcast_source_to_json(src);
-				json_array_append_new(st, v);
-
-				json_t *u = json_object();
-				json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
-				json_object_set_new(v, "session", u);
-			}
-			json_object_set_new(ml, "streams", st);
-			/* TODO: @landswellsong do we need to list anything else here? */
-			json_array_append_new(list, ml);
-		}
-		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("list"));
-		json_object_set_new(response, "list", list);
+		json_object_set_new(response, "list", cm_rtpbcast_mountpoints_to_json(session));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "create")) {
 		/* Create a new stream */
@@ -1144,7 +1347,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 				id ? (char *)json_string_value(id) : NULL,
 				name ? (char *)json_string_value(name) : NULL,
 				desc ? (char *)json_string_value(desc) : NULL,
-				(!recorded) || json_is_true(recorded), 	/* Recorded by default */
+				cm_rtpbcast_settings.recording_enabled ? (recorded && json_is_true(recorded)) : FALSE,
 				whitelist ? json_string_value(whitelist) : NULL,
 				sources);
 		if(mp == NULL) {
@@ -1164,6 +1367,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		json_object_set_new(response, "created", json_string(mp->name));
 		json_t *ml = json_object();
 		json_object_set_new(ml, "id", json_string(mp->id));
+		json_object_set_new(ml, "uid", json_string(mp->uid));
 		json_object_set_new(ml, "description", json_string(mp->description));
 /*		json_object_set_new(ml, "streamcount", json_integer(nstreams)); */
 		json_t *st = json_array();
@@ -1175,6 +1379,15 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		}
 		json_object_set_new(ml, "streams", st);
 		json_object_set_new(response, "stream", ml);
+
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "destroy")) {
 		/* Get rid of an existing stream (notice this doesn't remove it from the config file, though) */
@@ -1208,8 +1421,17 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("destroyed"));
 		json_object_set_new(response, "destroyed", json_string(id_value));
+
+		json_t *event = json_object();
+		json_t *result = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
+		json_object_set_new(result, "event", json_string("mountpoints-info"));
+		json_object_set_new(result, "list", cm_rtpbcast_mountpoints_to_json(session));
+		json_object_set_new(event, "result", result);
+		cm_rtpbcast_notify_supers(event);
+
 		goto plugin_response;
-	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "start")
+	} else if(!strcasecmp(request_text, "watch") || !strcasecmp(request_text, "watch-udp") || !strcasecmp(request_text, "start")
 			|| !strcasecmp(request_text, "pause") || !strcasecmp(request_text, "stop")
 			|| !strcasecmp(request_text, "switch") || !strcasecmp(request_text, "switch-source")) {
 		/* These messages are handled asynchronously */
@@ -1567,6 +1789,141 @@ static void *cm_rtpbcast_handler(void *data) {
 			sdp = g_strdup(sdptemp);
 			JANUS_LOG(LOG_VERB, "Going to offer this SDP:\n%s\n", sdp);
 			result = json_object();
+			json_t *currentsrc = cm_rtpbcast_source_to_json(src, session);
+			json_object_set_new(result, "stream", currentsrc);
+			json_object_set_new(result, "status", json_string("preparing"));
+		} else if(!strcasecmp(request_text, "watch-udp")) {
+			json_t *id = json_object_get(root, "id");
+			if(!id) {
+				JANUS_LOG(LOG_ERR, "Missing element (id)\n");
+				error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+				g_snprintf(error_cause, 512, "Missing element (id)");
+				goto error;
+			}
+			if(!json_is_string(id)) {
+				JANUS_LOG(LOG_ERR, "Invalid element (id should be a string)\n");
+				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
+				goto error;
+			}
+			const char *id_value = json_string_value(id);
+			janus_mutex_lock(&mountpoints_mutex);
+			cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
+			if(mp == NULL) {
+				janus_mutex_unlock(&mountpoints_mutex);
+				JANUS_LOG(LOG_VERB, "No such mountpoint/stream %s\n", id_value);
+				error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
+				g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
+				goto error;
+			}
+			/* Streams is an array now, containing pairs of audio+video streams */
+			json_t *streams = json_object_get(root, "streams");
+			size_t nstreams = json_array_size(streams);
+			if (nstreams==0 || !json_is_array(streams)) {
+				JANUS_LOG(LOG_ERR, "Invalid element (streams should be a non-empty array)\n");
+				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+				g_snprintf(error_cause, 512, "Invalid element (streams should be a non-empty array)");
+				goto error;
+			}
+
+			janus_mutex_unlock(&mountpoints_mutex);
+			JANUS_LOG(LOG_VERB, "Request to watch-source-udp of mountpoint %s\n", id_value);
+
+			size_t i;
+			json_t *v;
+			int port[AV];
+			char *hostname[AV];
+
+			/* Remove all previous relays if any */
+			cm_rtpbcast_stop_udp_relays(session, NULL);
+
+			/* Create new array */
+			session->relay_udp_gateways = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_udp_relay_gateway), nstreams);
+			/* @landswellsong: might be useful if we switch to pointers again
+			g_array_set_clear_func(session->relay_udp_gateways, g_free); */
+
+#ifdef json_array_foreach
+			json_array_foreach(streams, i, v) {
+#else
+			for (i = 0; i < json_array_size(streams); i++) {
+				v = json_array_get(streams, i);
+#endif
+				if (v && !json_is_object(v)) {
+					JANUS_LOG(LOG_ERR, "Invalid element (streams elements should be objects)\n");
+					error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+					g_snprintf(error_cause, 512, "Invalid value (streams elements should be objects)");
+					goto error;
+				}
+
+				/* Audio/Video stream params */
+				size_t j;
+				for (j = AUDIO; j <= VIDEO; j++) {
+					char tmpnm[512];
+					g_snprintf(tmpnm, 512, "%shost", av_names[j]);
+					json_t *mcast = json_object_get(v, tmpnm);
+					if(mcast && !json_is_string(mcast)) {
+						JANUS_LOG(LOG_ERR, "Invalid element (%s should be a string)\n", tmpnm);
+						error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+						g_snprintf(error_cause, 512, "Invalid element (%s should be a string)", tmpnm);
+						goto error;
+					}
+					hostname[j] = (char *)json_string_value(mcast);
+
+					g_snprintf(tmpnm, 512, "%sport", av_names[j]);
+					json_t *pt = json_object_get(v, tmpnm);
+					if(!pt) {
+						JANUS_LOG(LOG_ERR, "Missing element (%s)\n", tmpnm);
+						error_code = CM_RTPBCAST_ERROR_MISSING_ELEMENT;
+						g_snprintf(error_cause, 512, "Missing element (%s)", tmpnm);
+						goto error;
+					}
+					if(!json_is_integer(pt) || json_integer_value(pt) < 0) {
+						JANUS_LOG(LOG_ERR, "Invalid element (%s should be a positive integer)\n", tmpnm);
+						error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
+						g_snprintf(error_cause, 512, "Invalid element (%s should be a positive integer)", tmpnm);
+						goto error;
+					}
+					port[j] = json_integer_value(pt);
+				}
+
+				cm_rtpbcast_rtp_source *src = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, i);
+
+				/* Let's create UDP gateway for Audio and Video */
+				cm_rtpbcast_udp_relay_gateway udp_gateway;
+				for (j = AUDIO; j <= VIDEO; j++) {
+					if (!cm_rtpbcast_construct_address(hostname[j], port[j], &udp_gateway.sin[j])) {
+						JANUS_LOG(LOG_ERR, "Can not resolve %s:%d for streaming %s, skipping output.", hostname[j], port[j], av_names[j]);
+						udp_gateway.valid[j] = FALSE;
+					}
+					else {
+						udp_gateway.valid[j] = TRUE;
+					}
+				}
+				udp_gateway.source = src;
+
+				/* If we don't need queues, then create a fd */
+				if (!cm_rtpbcast_settings.udp_relay_queue_enabled) {
+					if ((udp_gateway.fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot create socket! Reason: %s\n", strerror(errno));
+						udp_gateway.valid[j] = FALSE; // TODO proper error reporting
+					}
+				}
+				else
+					udp_gateway.fd = -1;
+
+				g_array_append_val(session->relay_udp_gateways, udp_gateway);
+
+				/* All preparations are done, add the session to watchers */
+				janus_mutex_lock(&src->mutex);
+				src->listeners = g_list_append(src->listeners, session);
+				janus_mutex_unlock(&src->mutex);
+			}
+
+			/* Let's configure session with UDP relay type */
+			session->started = TRUE;
+			session->stopping = FALSE;
+
+			result = json_object();
 			json_object_set_new(result, "status", json_string("preparing"));
 		} else if(!strcasecmp(request_text, "start")) {
 			if(session->source == NULL) {
@@ -1627,7 +1984,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
 
-      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
+      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
 				json_object_set_new(result, "next", nextsrc);
 
 				session->autoswitch = FALSE;
@@ -1635,7 +1992,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				session->autoswitch = TRUE;
 			}
 			/* Done */
-			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "current", currentsrc);
 			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
 		} else if(!strcasecmp(request_text, "switch")) {
@@ -1663,7 +2020,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				g_snprintf(error_cause, 512, "Invalid element (id should be a string)");
 				goto error;
 			}
-			char *id_value = json_string_value(id);
+			const char *id_value = json_string_value(id);
 			janus_mutex_lock(&mountpoints_mutex);
 			cm_rtpbcast_mountpoint *mp = g_hash_table_lookup(mountpoints, id_value);
 			if(mp == NULL) {
@@ -1681,8 +2038,8 @@ static void *cm_rtpbcast_handler(void *data) {
 
 			/* Done */
 			result = json_object();
-			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc);
-      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source);
+			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
+      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
@@ -1830,6 +2187,7 @@ static void cm_rtpbcast_mountpoint_free(cm_rtpbcast_mountpoint *mp) {
 	mp->destroyed = janus_get_monotonic_time();
 
 	g_free(mp->id);
+	g_free(mp->uid);
 	g_free(mp->name);
 	g_free(mp->description);
 
@@ -1852,6 +2210,17 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		return NULL;
 	}
 	live_rtp->id = g_strdup(id);
+
+	/* Generating an MD5 for UID */
+	guint64 ml = janus_get_monotonic_time();
+	guint32 r = g_random_int();
+
+	char buf[512];
+	g_snprintf(buf, 512, "%lu%llu%s", (long unsigned)r, (long long unsigned)ml, CM_RTPBCAST_PACKAGE);
+	gchar *md5 = g_compute_checksum_for_string(G_CHECKSUM_MD5, buf, -1);
+
+	live_rtp->uid = g_strdup(md5);
+
 	char tempname[255];
 	if(!name) {
 		memset(tempname, 0, 255);
@@ -1876,7 +2245,6 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 			live_rtp->whitelisted = TRUE;
 		}
 	}
-
 
 	/* Iterating over requests array to add all streams */
 	live_rtp->sources = g_array_sized_new(FALSE, FALSE, sizeof(cm_rtpbcast_rtp_source*), requests->len);
@@ -1961,6 +2329,7 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 
 	error:
 	g_free(live_rtp->id);
+	g_free(live_rtp->uid);
 	g_free(live_rtp->name);
 	g_free(live_rtp->description);
 	g_array_free(live_rtp->sources, TRUE);
@@ -2015,6 +2384,8 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	char buffer[1500];
 	memset(buffer, 0, 1500);
 	cm_rtpbcast_rtp_relay_packet packet;
+
+	packet.source_index = nstream;
 
 	while(!g_atomic_int_get(&stopping) && !mountpoint->destroyed) {
 		/* Wait for some data */
@@ -2100,7 +2471,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
 				}
 
-				if (nstream == 0 && j == VIDEO) {
+				if (mountpoint->recorded && nstream == 0 && j == VIDEO) {
 					/* Is it time to do thumbnailing? */
 					guint64 ml = janus_get_monotonic_time();
 					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
@@ -2224,6 +2595,40 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	return NULL;
 }
 
+	gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin) {
+		/* Let's create and verify the hostname */
+		struct hostent *host = gethostbyname(hostname);
+		if (host == NULL) {
+			JANUS_LOG(LOG_ERR, "UDP:Send: cannot get hostname! Reason: %s\n", strerror(errno));
+			return FALSE;
+		}
+
+		/* Let's initialize server address */
+		memset((char *) sin, 0, sizeof(struct sockaddr_in));
+		sin->sin_family = AF_INET;
+		sin->sin_port = htons(port);
+		sin->sin_addr = *((struct in_addr*) host->h_addr);
+
+		return TRUE;
+}
+
+int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int source_index, int isvideo, char *buf, int buf_len) {
+		if(session->relay_udp_gateways != NULL) {
+			cm_rtpbcast_udp_relay_gateway gateway = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway , source_index);
+
+			if (gateway.valid[isvideo]) {
+				if (cm_rtpbcast_settings.udp_relay_queue_enabled)
+					cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
+				else
+				  if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
+						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
+				return 1;
+			}
+			else return 0;
+		}
+		return 1;
+}
+
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	cm_rtpbcast_rtp_relay_packet *packet = (cm_rtpbcast_rtp_relay_packet *)user_data;
 	if(!packet || !packet->data || packet->length < 1) {
@@ -2257,8 +2662,17 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	/* Update the timestamp and sequence number in the RTP packet, and send it */
 	packet->data->timestamp = htonl(session->context.last_ts[j]);
 	packet->data->seq_number = htons(session->context.last_seq[j]);
-	if(gateway != NULL)
-		gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
+
+	if (session->source) {
+		if(gateway != NULL) {
+			gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
+		}
+	}
+
+	if (session->relay_udp_gateways) {
+		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->source_index, packet->is_video, (char *)packet->data, packet->length);
+	}
+
 	/* Restore the timestamp and sequence number to what the publisher set them to */
 	packet->data->timestamp = htonl(packet->timestamp);
 	packet->data->seq_number = htons(packet->seq_number);
@@ -2378,16 +2792,20 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 	   no such source found */
-	guint i = 0; cm_rtpbcast_rtp_source *src; guint64 source_remb;
-	guint s_count = sources->len;
-	do {
+	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
+	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats.stat_mutex);
-		source_remb = (guint64)src->stats.avg;
+		source_bw = (guint64)src->stats.avg;
 		janus_mutex_unlock(&src->stats.stat_mutex);
-	} while (i < s_count && remb < source_remb);
 
-	return src;
+		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
+			best_src = src;
+			best_bw = source_bw;
+		}
+	}
+
+	return best_src;
 }
 
 void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
@@ -2452,6 +2870,7 @@ static void cm_rtpbcast_generic_start_recording(
 		size_t start, size_t end, 			/* Inclusive, which ones to process */
 		const char *fname_pattern,			/* Printf pattern for filename */
 		const char *id,									/* streamChannelKey */
+		const char *uid,								/* unique ID */
 		const char *types[],						/* Type labels, per recorder */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
 	) {
@@ -2466,6 +2885,7 @@ static void cm_rtpbcast_generic_start_recording(
 		/* Event for notification */
 		json_t *response = json_object();
 		json_object_set_new(response, "id", json_string(id));
+		json_object_set_new(response, "uid", json_string(uid));
 
 		/* Assuming streams contain both video and audio */
 		guint64 mt = janus_get_monotonic_time();
@@ -2517,6 +2937,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	janus_recorder *recorders[],		/* Array or pointer to recorders */
 	size_t start, size_t end, 			/* Inclusive, which ones to process */
 	const char *id,									/* streamChannelKey */
+	const char *uid,								/* unique ID */
 	const char *types[],						/* Type labels, per recorder */
 	const char *event_name				  /* JSON event name for notification */
 	) {
@@ -2529,6 +2950,9 @@ static void cm_rtpbcast_generic_stop_recording(
 	/* Event for notification */
 	json_t *response = json_object();
 	json_object_set_new(response, "id", json_string(id));
+	json_object_set_new(response, "uid", json_string(uid));
+	/* Timestamp of file creation in seconds */
+	json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
 
 	for (j = start; j <= end; j++) {
 		if (recorders[j]) {
@@ -2560,6 +2984,7 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt) {
 		AUDIO, VIDEO,
 		cm_rtpbcast_settings.recording_pattern,
 		mnt->id,
+		mnt->uid,
 		av_names,
 		is_video
 	);
@@ -2570,6 +2995,7 @@ void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *mnt) {
 		mnt->rc,
 		AUDIO, VIDEO,
 		mnt->id,
+		mnt->uid,
 		av_names,
 		"archive-finished"
 	);
@@ -2583,6 +3009,7 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		0, 0,
 		cm_rtpbcast_settings.thumbnailing_pattern,
 		mnt->id,
+		mnt->uid,
 		types,
 		is_video
 	);
@@ -2594,6 +3021,7 @@ void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *mnt) {
 		mnt->trc,
 		0, 0,
 		mnt->id,
+		mnt->uid,
 		types,
 		"thumbnailing-finished"
 	);
@@ -2628,15 +3056,23 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 			json_decref(event);
 			while(viewer) {
 				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
+				/* TODO: why don't we have a per-session mutex? */
 				if(session != NULL) {
 					session->stopping = TRUE;
 					session->started = FALSE;
 					session->paused = FALSE;
-					session->source = NULL;
-					/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
-					gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
-					gateway->close_pc(session->handle);
+					/* If the session was a watcher */
+					if (session->source) {
+						session->source = NULL;
+						/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
+						gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+						gateway->close_pc(session->handle);
+					}
+					/* If the session was a repeater. Note this removes session from listeners so
+					 * g_list_remove_all becomes a redundant call. */
+					cm_rtpbcast_stop_udp_relays(session, src); /* TODO: any kind of notification maybe? */
 				}
+				/* FIXME: why not remove_link ? */
 				src->listeners = g_list_remove_all(src->listeners, session);
 				viewer = g_list_first(src->listeners);
 			}
@@ -2664,6 +3100,60 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 		old_mountpoints = g_list_append(old_mountpoints, mp);
 	}
 }
+
+void cm_rtpbcast_notify_supers(json_t* response) {
+	if(!super_sessions)
+		return;
+
+	if(!response)
+		return;
+
+	g_list_foreach(super_sessions, cm_rtpbcast_notify_session, response);
+}
+
+void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
+	cm_rtpbcast_session *session = data;
+	json_t *event = user_data;
+
+	if (!session || !event)
+		return;
+
+	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+	JANUS_LOG(LOG_VERB, "Pushing event: %s\n", event_text);
+	int ret = gateway->push_event(session->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+	JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
+	g_free(event_text);
+}
+
+void cm_rtpbcast_stop_udp_relays(cm_rtpbcast_session *session, cm_rtpbcast_rtp_source *srcmx) {
+	/* Check if we have udp relays to begin with */
+	if (!session->relay_udp_gateways)
+		return;
+
+	/* Remove ourselves from every source */
+	int i;
+	for (i = 0; i < session->relay_udp_gateways->len; i++) {
+		cm_rtpbcast_udp_relay_gateway gw = g_array_index(session->relay_udp_gateways, cm_rtpbcast_udp_relay_gateway, i);
+
+		/* This function can be called from within mountpoint_destroy() which has a mutex locked over one source
+		 * so we check the argument here to prevent deadlocking */
+		if (srcmx != gw.source)
+			janus_mutex_lock(&gw.source->mutex);
+		gw.source->listeners = g_list_remove_all(gw.source->listeners, session);
+		if (srcmx != gw.source)
+			janus_mutex_unlock(&gw.source->mutex);
+
+		/* If we had a fd open close it */
+		if (gw.fd >= 0) {
+			close(gw.fd);
+			gw.fd = -1;
+		}
+	}
+
+	g_array_free(session->relay_udp_gateways, TRUE);
+	session->relay_udp_gateways = NULL;
+}
+
 
 void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc) {
 	JANUS_LOG(LOG_VERB, "Scheduling session 0x%x to switch to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(newsrc));
@@ -2732,8 +3222,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	json_object_set_new(result, "event", json_string("changed"));
 
-	json_t *currentsrc = cm_rtpbcast_source_to_json(source);
-	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc);
+	json_t *currentsrc = cm_rtpbcast_source_to_json(source, sessid);
+	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc, sessid);
 
 	json_object_set_new(result, "current", currentsrc);
 	json_object_set_new(result, "previous", previoussrc);
@@ -2744,7 +3234,6 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
 }
-
 
 void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 	if (src->waiters) {
@@ -2758,30 +3247,83 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 	}
 }
 
-json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src) {
-		json_t *v = json_object();
+json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session) {
+	json_t *mps = json_array();
+	janus_mutex_unlock(&mountpoints_mutex);
+	GHashTableIter iter;
+	gpointer value;
+	g_hash_table_iter_init(&iter, mountpoints);
+	while (g_hash_table_iter_next(&iter, NULL, &value)) {
+		cm_rtpbcast_mountpoint *mp = value;
+		json_t *v = cm_rtpbcast_mountpoint_to_json(mp, session);
+		json_array_append_new(mps, v);
+	}
+	janus_mutex_unlock(&mountpoints_mutex);
+	return mps;
+}
 
-		json_object_set_new(v, "id", json_string(src->mp->id));
-		json_object_set_new(v, "index", json_integer(src->index));
+json_t *cm_rtpbcast_mountpoint_to_json(cm_rtpbcast_mountpoint *mountpoint, cm_rtpbcast_session *session) {
+	json_t *mp = json_object();
 
-		json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
-		json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
+	json_object_set_new(mp, "id", json_string(mountpoint->id));
+	json_object_set_new(mp, "uid", json_string(mountpoint->uid));
+	json_object_set_new(mp, "name", json_string(mountpoint->name));
+	json_object_set_new(mp, "description", json_string(mountpoint->description));
+	json_object_set_new(mp, "enabled", json_integer(mountpoint->enabled));
+	json_object_set_new(mp, "recorded", json_integer(mountpoint->recorded));
+	json_object_set_new(mp, "whitelisted", json_integer(mountpoint->whitelisted));
 
-		json_t *s = json_object();
-		janus_mutex_lock(&src->stats.stat_mutex);
-		json_object_set_new(s, "min", json_real(src->stats.min));
-		json_object_set_new(s, "max", json_real(src->stats.max));
-		json_object_set_new(s, "cur", json_real(src->stats.cur));
-		json_object_set_new(s, "avg", json_real(src->stats.avg));
-		janus_mutex_unlock(&src->stats.stat_mutex);
-		json_object_set_new(v, "stats", s);
+	json_t *st = cm_rtpbcast_sources_to_json(mountpoint->sources, session);
+	json_object_set_new(mp, "streams", st);
 
-		json_t *f = json_object();
-		json_object_set_new(f, "width", json_integer(src->frame_width));
-		json_object_set_new(f, "height", json_integer(src->frame_height));
-		json_object_set_new(f, "fps", json_integer(src->frame_rate));
-		json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
-		json_object_set_new(v, "frame", f);
+	return mp;
+}
 
-		return v;
+json_t *cm_rtpbcast_sources_to_json(GArray *sources, cm_rtpbcast_session *session) {
+	json_t *st = json_array();
+	guint i;
+	for (i = 0; i < sources->len; i++) {
+		cm_rtpbcast_rtp_source *src = g_array_index(sources, cm_rtpbcast_rtp_source*, i);
+		json_t *v = cm_rtpbcast_source_to_json(src, session);
+		json_array_append_new(st, v);
+	}
+	return st;
+}
+
+json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_session *session) {
+	json_t *v = json_object();
+
+	json_object_set_new(v, "id", json_string(src->mp->id));
+	json_object_set_new(v, "uid", json_string(src->mp->uid));
+	json_object_set_new(v, "index", json_integer(src->index));
+
+	json_object_set_new(v, "audioport", json_integer(src->port[AUDIO]));
+	json_object_set_new(v, "videoport", json_integer(src->port[VIDEO]));
+
+	json_object_set_new(v, "listeners", json_integer(g_list_length(src->listeners)));
+	json_object_set_new(v, "waiters", json_integer(g_list_length(src->waiters)));
+
+	json_t *s = json_object();
+	janus_mutex_lock(&src->stats.stat_mutex);
+	json_object_set_new(s, "min", json_real(src->stats.min));
+	json_object_set_new(s, "max", json_real(src->stats.max));
+	json_object_set_new(s, "cur", json_real(src->stats.cur));
+	json_object_set_new(s, "avg", json_real(src->stats.avg));
+	janus_mutex_unlock(&src->stats.stat_mutex);
+	json_object_set_new(v, "stats", s);
+
+	json_t *f = json_object();
+	json_object_set_new(f, "width", json_integer(src->frame_width));
+	json_object_set_new(f, "height", json_integer(src->frame_height));
+	json_object_set_new(f, "fps", json_integer(src->frame_rate));
+	json_object_set_new(f, "key-distance", json_integer(src->frame_key_distance));
+	json_object_set_new(v, "frame", f);
+
+	json_t *u = json_object();
+	json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
+	json_object_set_new(u, "autoswitch-enabled", json_integer(session->autoswitch));
+	json_object_set_new(u, "remb-avg", json_integer(session->remb));
+	json_object_set_new(v, "session", u);
+
+	return v;
 }
