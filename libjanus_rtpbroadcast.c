@@ -2318,9 +2318,8 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 				/* Bad connection simulation */
 				if (cm_rtpbcast_settings.simulate_bad_connection) {
-					/* TODO: check if numbers add up */
 					/* Throw a dice if the packet should be just ignored */
-					if (cm_rtpbcast_settings.packet_loss_rate > g_random_int_range(1,101)) {
+					if (cm_rtpbcast_settings.packet_loss_rate > g_random_int_range(0,100)) {
 						JANUS_LOG(LOG_VERB, "[%s] Discarding packet for bad connection simulation.\n", mountpoint->name);
 						continue;
 					}
