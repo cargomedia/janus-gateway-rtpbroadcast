@@ -58,7 +58,6 @@
 ; Thumbnailing duration in seconds
 ; thumbnailing_duration = 10
 
-
 ; Bad connection simulator, only for debug purpose
 ; Note: defaults are 0, comment the options to disable
 ; simulate_bad_connection = yes

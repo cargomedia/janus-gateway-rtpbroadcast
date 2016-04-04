@@ -294,7 +294,7 @@ typedef struct cm_rtpbcast_mountpoint {
 
 	gboolean enabled;
 
-	gboolean recorded; 		  /* Only sources[0] is recorded by default */
+	gboolean recorded; 			/* Only sources[0] is recorded by default */
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
 	janus_recorder *trc[1];	/* Thumbnailing recorder, array for generic code sake */
 	guint64 last_thumbnail; /* Positon (frames/time) of last thumbnail taken */
@@ -343,7 +343,7 @@ typedef struct cm_rtpbcast_rtp_source {
 	gboolean frame_key_overdue;
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
-	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
+	GList/*<unowned cm_rtpbcast_session>*/ *waiters;	 /* listeners waiting for keyframe */
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
@@ -904,7 +904,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	janus_mutex_init(&udp_relay_mutex);
 	udp_relay_queue = NULL;
 	if (cm_rtpbcast_settings.udp_relay_queue_enabled) {
-	  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
+		udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
 		if(!udp_relay) {
 			g_atomic_int_set(&initialized, 0);
 			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
@@ -1216,7 +1216,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		/* Create a new stream */
 		cm_rtpbcast_mountpoint *mp = NULL;
 
-	  /* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
+		/* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
 			JANUS_LOG(LOG_ERR, "Missing element (id)\n");
@@ -2010,7 +2010,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
 
-      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
+				json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
 				json_object_set_new(result, "next", nextsrc);
 
 				session->autoswitch = FALSE;
@@ -2065,7 +2065,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Done */
 			result = json_object();
 			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
-      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
@@ -2369,7 +2369,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	cm_rtpbcast_mountpoint *mountpoint = tdata->mp;
 	guint nstream = tdata->i;
 	cm_rtpbcast_rtp_source *source = g_array_index(mountpoint->sources, cm_rtpbcast_rtp_source*, nstream);
-  /* Data no longer needed */
+	/* Data no longer needed */
 	g_free(data);
 
 	if(!mountpoint) {
@@ -2663,7 +2663,7 @@ int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int sourc
 				if (cm_rtpbcast_settings.udp_relay_queue_enabled)
 					cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
 				else
-				  if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
+					if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
 						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
 				return 1;
 			}
@@ -2815,7 +2815,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 			if (seq >= st->last_avg_seq[isvideo])
 				st->packets_since_last_avg[isvideo]++;
 		}
-	  /* Make sure to count the biggest seq number we've seen in this
+		/* Make sure to count the biggest seq number we've seen in this
 		 * averaging interval to counter reordering */
 		if (st->max_seq_since_last_avg[isvideo] < seq)
 			st->max_seq_since_last_avg[isvideo] = seq;
@@ -2845,7 +2845,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 			if (den != 0)
 				st->current_loss[isvideo] = 1.0 - (gdouble)st->packets_since_last_avg[isvideo] / (gdouble) den;
 			else
-			  st->current_loss[isvideo] = 0.0;
+				st->current_loss[isvideo] = 0.0;
 			st->packets_since_last_avg[isvideo] = 0;
 			st->last_avg_seq[isvideo] = st->max_seq_since_last_avg[isvideo];
 		}
@@ -2855,7 +2855,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 	delay = ml - st->start_usec;
 	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (delay != 0 ? delay : 1);
 
-  if (isvideo != -1) {
+	if (isvideo != -1) {
 		guint32 den = st->max_seq_since_last_avg[isvideo] - st->start_seq[isvideo] + 1;
 		if (den != 0)
 			st->average_loss[isvideo] = 1.0 - (gdouble)st->packets_since_start[isvideo] / (gdouble) den;
@@ -2878,7 +2878,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		return g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
 
 	/* Pick the source with bitrate less than REMB given or the worst quality if
-	   no such source found */
+		 no such source found */
 	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
 	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
@@ -3026,7 +3026,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	const char *id,									/* streamChannelKey */
 	const char *uid,								/* unique ID */
 	const char *types[],						/* Type labels, per recorder */
-	const char *event_name				  /* JSON event name for notification */
+	const char *event_name					/* JSON event name for notification */
 	) {
 	size_t j; gboolean res = TRUE;
 	for (j = start; j <= end; j++)
@@ -3292,7 +3292,7 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	if (source != oldsrc)
 		janus_mutex_lock(&oldsrc->mutex);
 
-  /* Remove from old source and attach to new source */
+	/* Remove from old source and attach to new source */
 	oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 	source->listeners = g_list_prepend(source->listeners, sessid);
 	sessid->source = source;
