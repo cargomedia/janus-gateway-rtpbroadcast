@@ -3056,7 +3056,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	if (res)
 		return;
 
-	json_t *response;
+	json_t *response = json_object();
 
 	/* Don't allow to create job file if not frame has been stored. Audio source will be ignored too if no keyframe arrived for video stream */
 	int recorder_video_index = (start == end)? 0 : VIDEO;
@@ -3078,7 +3078,6 @@ static void cm_rtpbcast_generic_stop_recording(
 	} else {
 
 		/* Event for notification */
-		response = json_object();
 		json_object_set_new(response, "id", json_string(id));
 		json_object_set_new(response, "uid", json_string(uid));
 		/* Timestamp of file creation in seconds */
