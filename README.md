@@ -135,7 +135,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session
-- `cur_loss` is an estimate of UDP packets loss for the window of last `source_avg_time seconds` as regular stats
+- `cur_loss` is an estimate of UDP packets loss for the window of last `source_avg_time` seconds as regular stats
 - `avg_loss` is an estimate of UDP packets loss for the whole time the connection is on
 
 #### Mountpoint definition for responses
