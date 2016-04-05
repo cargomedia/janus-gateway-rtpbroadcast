@@ -244,6 +244,8 @@ static struct {
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
 	gboolean recording_enabled;
+	gboolean simulate_bad_connection;
+ 	guint packet_loss_rate;
 	gboolean udp_relay_queue_enabled;
 } cm_rtpbcast_settings;
 
@@ -260,15 +262,25 @@ typedef struct cm_rtpbcast_stats {
 	gdouble cur;
 	gdouble avg;
 
+	/* FIXME do we need minmax here? */
+	gdouble average_loss[AV];
+	gdouble current_loss[AV];
+
 	guint64 start_usec;
 	guint64 last_avg_usec;
 	guint64 bytes_since_start;
 	guint64 bytes_since_last_avg;
 
+	guint32 start_seq[AV];
+	guint32 last_avg_seq[AV];
+	guint32 max_seq_since_last_avg[AV];
+	guint64 packets_since_start[AV];
+	guint64 packets_since_last_avg[AV];
+
 	janus_mutex stat_mutex;
 } cm_rtpbcast_stats;
 static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *);
-static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, int);
+static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, gsize, guint32, int);
 
 /* Forward declaration for pointer */
 typedef struct cm_rtpbcast_session cm_rtpbcast_session;
@@ -280,7 +292,7 @@ typedef struct cm_rtpbcast_mountpoint {
 
 	gboolean enabled;
 
-	gboolean recorded; 		  /* Only sources[0] is recorded by default */
+	gboolean recorded; 			/* Only sources[0] is recorded by default */
 	janus_recorder *rc[AV];	/* The Janus recorder instance for this mountpoint's audio/video, if enabled */
 	janus_recorder *trc[1];	/* Thumbnailing recorder, array for generic code sake */
 	guint64 last_thumbnail; /* Positon (frames/time) of last thumbnail taken */
@@ -329,7 +341,7 @@ typedef struct cm_rtpbcast_rtp_source {
 	gboolean frame_key_overdue;
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
-	GList/*<unowned cm_rtpbcast_session>*/ *waiters;   /* listeners waiting for keyframe */
+	GList/*<unowned cm_rtpbcast_session>*/ *waiters;	 /* listeners waiting for keyframe */
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
@@ -754,6 +766,8 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 	cm_rtpbcast_settings.recording_enabled = TRUE;
+	cm_rtpbcast_settings.simulate_bad_connection = FALSE;
+	cm_rtpbcast_settings.packet_loss_rate = 0;
 	cm_rtpbcast_settings.udp_relay_queue_enabled = FALSE;
 
 	mountpoints = g_hash_table_new_full(
@@ -768,10 +782,12 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		{
 			const char *inames [] = {
 				"recording_enabled",
+				"simulate_bad_connection",
 				"udp_relay_queue_enabled",
 			};
-			guint *ivars [] = {
+			gboolean *ivars [] = {
 				&cm_rtpbcast_settings.recording_enabled,
+				&cm_rtpbcast_settings.simulate_bad_connection,
 				&cm_rtpbcast_settings.udp_relay_queue_enabled,
 			};
 
@@ -794,6 +810,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"switching_delay",
 				"session_info_update_time",
 				"keyframe_distance_alert",
+				"packet_loss_rate",
 				"udp_relay_interval",
 			};
 			guint *ivars [] = {
@@ -806,6 +823,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
+				&cm_rtpbcast_settings.packet_loss_rate,
 				&cm_rtpbcast_settings.udp_relay_interval,
 			};
 
@@ -878,7 +896,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	janus_mutex_init(&udp_relay_mutex);
 	udp_relay_queue = NULL;
 	if (cm_rtpbcast_settings.udp_relay_queue_enabled) {
-	  udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
+		udp_relay = g_thread_try_new("rtpbroadcast udp relay", &cm_rtpbcast_udp_relay_thread, NULL, &error);
 		if(!udp_relay) {
 			g_atomic_int_set(&initialized, 0);
 			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast UDP relay thread...\n", error->code, error->message ? error->message : "??");
@@ -1190,7 +1208,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		/* Create a new stream */
 		cm_rtpbcast_mountpoint *mp = NULL;
 
-	  /* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
+		/* RTP live source (e.g., from gstreamer/ffmpeg/vlc/etc.) */
 		json_t *id = json_object_get(root, "id");
 		if(!id) {
 			JANUS_LOG(LOG_ERR, "Missing element (id)\n");
@@ -1984,7 +2002,7 @@ static void *cm_rtpbcast_handler(void *data) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
 
-      	json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
+				json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
 				json_object_set_new(result, "next", nextsrc);
 
 				session->autoswitch = FALSE;
@@ -2039,7 +2057,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			/* Done */
 			result = json_object();
 			json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
-      json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
+			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
 			json_object_set_new(result, "next", nextsrc);
 			json_object_set_new(result, "current", currentsrc);
 		} else if(!strcasecmp(request_text, "stop")) {
@@ -2343,7 +2361,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	cm_rtpbcast_mountpoint *mountpoint = tdata->mp;
 	guint nstream = tdata->i;
 	cm_rtpbcast_rtp_source *source = g_array_index(mountpoint->sources, cm_rtpbcast_rtp_source*, nstream);
-  /* Data no longer needed */
+	/* Data no longer needed */
 	g_free(data);
 
 	if(!mountpoint) {
@@ -2386,6 +2404,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	cm_rtpbcast_rtp_relay_packet packet;
 
 	packet.source_index = nstream;
+	cm_rtpbcast_stats_restart(&source->stats);
 
 	while(!g_atomic_int_get(&stopping) && !mountpoint->destroyed) {
 		/* Wait for some data */
@@ -2404,7 +2423,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 			JANUS_LOG(LOG_ERR, "[%s] Error polling... %d (%s)\n", mountpoint->name, errno, strerror(errno));
 			break;
 		} else if(resfd == 0) {
-			cm_rtpbcast_stats_update(&source->stats, 0);
+			cm_rtpbcast_stats_update(&source->stats, 0, 0, -1);
 			/* No data, keep going */
 			continue;
 		}
@@ -2420,6 +2439,19 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				}
 				addrlen = sizeof(remote);
 				bytes = recvfrom(source->fd[j], buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
+
+				/* Bad connection simulation */
+				if (cm_rtpbcast_settings.simulate_bad_connection) {
+					/* Throw a dice if the packet should be just ignored */
+					if (cm_rtpbcast_settings.packet_loss_rate > g_random_int_range(0,100)) {
+						JANUS_LOG(LOG_VERB, "[%s] Discarding packet for bad connection simulation.\n", mountpoint->name);
+						continue;
+					}
+
+					/* Retransmit the packet to ourselves with a delay */
+					/* TODO */
+				}
+
 				/* Note we only update stats for legitimate packets */
 				if(source->mp && source->mp->whitelisted &&
 					memcmp(&remote.sin_addr.s_addr, &source->mp->allowed_ip.s_addr, sizeof(in_addr_t)) != 0) {
@@ -2431,9 +2463,6 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					continue;
 				}
 
-				/* Note we only update stats for legitimate packets */
-				/* FIXME @landswellsong are we only expecting IPv4 ? */
-				cm_rtpbcast_stats_update(&source->stats, bytes + sizeof(struct ip) + sizeof(struct udphdr));
 				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
 				/* If paused, ignore this packet */
 				if(!mountpoint->enabled)
@@ -2453,12 +2482,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					ctx.base_ts[j] = ntohl(packet.data->timestamp);
 					ctx.base_seq_prev[j] = ctx.last_seq[j];
 					ctx.base_seq[j] = ntohs(packet.data->seq_number);
+					/* FIXME @landswellsong maybe update stats here too? */
 				}
 				/* FIXME We're assuming Opus here for audio and 15fps for video... */
 				ctx.last_ts[j] = (ntohl(packet.data->timestamp)-ctx.base_ts[j])+ctx.base_ts_prev[j]+ (j == AUDIO? 960 : 4500);
 				packet.data->timestamp = htonl(ctx.last_ts[j]);
 				ctx.last_seq[j] = (ntohs(packet.data->seq_number)-ctx.base_seq[j])+ctx.base_seq_prev[j]+1;
 				packet.data->seq_number = htons(ctx.last_seq[j]);
+
+				/* Note we only update stats for legitimate packets */
+				/* FIXME @landswellsong are we only expecting IPv4 ? */
+				cm_rtpbcast_stats_update(&source->stats, bytes + sizeof(struct ip) + sizeof(struct udphdr), ntohs(packet.data->seq_number), (int)j);
+
 				//~ JANUS_LOG(LOG_VERB, " ... updated RTP packet (ssrc=%u, pt=%u, seq=%u, ts=%u)...\n",
 					//~ ntohl(rtp->ssrc), rtp->type, ntohs(rtp->seq_number), ntohl(rtp->timestamp));
 				packet.data->type = source->codecs.pt[j];
@@ -2620,7 +2655,7 @@ int cm_rtpbcast_relay_rtp_packet_via_udp(cm_rtpbcast_session *session, int sourc
 				if (cm_rtpbcast_settings.udp_relay_queue_enabled)
 					cm_rtpbcast_udp_enqueue(buf, buf_len, &gateway.sin[isvideo]);
 				else
-				  if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
+					if (sendto(gateway.fd, buf, buf_len, 0, (struct sockaddr *)&gateway.sin[isvideo], sizeof(struct sockaddr_in)) == -1)
 						JANUS_LOG(LOG_ERR, "UDP:Relay: cannot send message! Reason %s\n", strerror(errno));
 				return 1;
 			}
@@ -2741,7 +2776,7 @@ void cm_rtpbcast_port_manager_destroy() {
 static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	janus_mutex_lock(&st->stat_mutex);
 
-	memset(st, 0, sizeof(*st));
+	memset(st, 0, sizeof(cm_rtpbcast_stats));
 	guint64 ml = janus_get_monotonic_time();
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
@@ -2749,12 +2784,34 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	janus_mutex_unlock(&st->stat_mutex);
 }
 
-static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
+static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32 seq, int isvideo) {
 	janus_mutex_lock(&st->stat_mutex);
 
 	/* This overflows at 17179869184 GB of traffic just in case :) */
 	st->bytes_since_start += bytes;
 	st->bytes_since_last_avg += bytes;
+
+	/* -1 means we were not called on a particular stream */
+	if (isvideo != -1) {
+
+		/* If last_seq's are zero, set them */
+		if (!st->start_seq[isvideo])
+			st->start_seq[isvideo] = seq;
+		if (!st->last_avg_seq)
+			st->last_avg_seq[isvideo] = seq;
+
+		/* For current packet loss make sure we don't count packets from
+		 * the past, i.e. sent before a reference packet was established */
+		if (seq > 0) {
+			st->packets_since_start[isvideo]++;
+			if (seq >= st->last_avg_seq[isvideo])
+				st->packets_since_last_avg[isvideo]++;
+		}
+		/* Make sure to count the biggest seq number we've seen in this
+		 * averaging interval to counter reordering */
+		if (st->max_seq_since_last_avg[isvideo] < seq)
+			st->max_seq_since_last_avg[isvideo] = seq;
+	}
 
 	guint64 ml = janus_get_monotonic_time();
 	guint64 delay;
@@ -2764,6 +2821,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 		/* Calculate */
 		delay = ml - st->last_avg_usec;
 		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (delay != 0 ? delay : 1);
+
 		/* Reset timer */
 		st->bytes_since_last_avg  = 0;
 		st->last_avg_usec = ml;
@@ -2772,11 +2830,32 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, int bytes) {
 			st->max = st->cur;
 		if (st->cur < st->min || st->min == 0.0L)
 			st->min = st->cur;
+
+		/* Estimate packet loss */
+		if (isvideo != -1) {
+			guint32 den = st->max_seq_since_last_avg[isvideo] - st->last_avg_seq[isvideo] + 1;
+			if (den != 0)
+				st->current_loss[isvideo] = 1.0 - (gdouble)st->packets_since_last_avg[isvideo] / (gdouble) den;
+			else
+				st->current_loss[isvideo] = 0.0;
+			st->packets_since_last_avg[isvideo] = 0;
+			st->last_avg_seq[isvideo] = st->max_seq_since_last_avg[isvideo];
+		}
 	}
 
 	/* Re-calculate average regardless */
 	delay = ml - st->start_usec;
 	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (delay != 0 ? delay : 1);
+
+	if (isvideo != -1) {
+		guint32 den = st->max_seq_since_last_avg[isvideo] - st->start_seq[isvideo] + 1;
+		if (den != 0)
+			st->average_loss[isvideo] = 1.0 - (gdouble)st->packets_since_start[isvideo] / (gdouble) den;
+		else
+			st->average_loss[isvideo] = 0.0;
+		/* If debug is enabled, output CSV for stat collection */
+		JANUS_LOG(LOG_DBG, "%d, %s, %.6f, %.6f\n", janus_get_monotonic_time(), av_names[isvideo], st->current_loss[isvideo], st->average_loss[isvideo]);
+	}
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -2791,7 +2870,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		return g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
 
 	/* Pick the source with bitrate less than REMB given or the worst quality if
-	   no such source found */
+		 no such source found */
 	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
 	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
@@ -2939,7 +3018,7 @@ static void cm_rtpbcast_generic_stop_recording(
 	const char *id,									/* streamChannelKey */
 	const char *uid,								/* unique ID */
 	const char *types[],						/* Type labels, per recorder */
-	const char *event_name				  /* JSON event name for notification */
+	const char *event_name					/* JSON event name for notification */
 	) {
 	size_t j; gboolean res = TRUE;
 	for (j = start; j <= end; j++)
@@ -3205,7 +3284,7 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	if (source != oldsrc)
 		janus_mutex_lock(&oldsrc->mutex);
 
-  /* Remove from old source and attach to new source */
+	/* Remove from old source and attach to new source */
 	oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 	source->listeners = g_list_prepend(source->listeners, sessid);
 	sessid->source = source;
@@ -3303,13 +3382,22 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "listeners", json_integer(g_list_length(src->listeners)));
 	json_object_set_new(v, "waiters", json_integer(g_list_length(src->waiters)));
 
-	json_t *s = json_object();
+	json_t *audio_stream = json_object();
+	json_t *video_stream = json_object();
 	janus_mutex_lock(&src->stats.stat_mutex);
+	json_object_set_new(audio_stream, "cur_loss", json_real(src->stats.current_loss[AUDIO]));
+	json_object_set_new(audio_stream, "avg_loss", json_real(src->stats.average_loss[AUDIO]));
+	json_object_set_new(video_stream, "cur_loss", json_real(src->stats.current_loss[VIDEO]));
+	json_object_set_new(video_stream, "avg_loss", json_real(src->stats.average_loss[VIDEO]));
+	janus_mutex_unlock(&src->stats.stat_mutex);
+
+	json_t *s = json_object();
 	json_object_set_new(s, "min", json_real(src->stats.min));
 	json_object_set_new(s, "max", json_real(src->stats.max));
 	json_object_set_new(s, "cur", json_real(src->stats.cur));
 	json_object_set_new(s, "avg", json_real(src->stats.avg));
-	janus_mutex_unlock(&src->stats.stat_mutex);
+	json_object_set_new(s, "audio", audio_stream);
+	json_object_set_new(s, "video", video_stream);
 	json_object_set_new(v, "stats", s);
 
 	json_t *f = json_object();
