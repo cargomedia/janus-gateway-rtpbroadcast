@@ -64,9 +64,3 @@
 
 ; Packet loss percentage
 ; packet_loss_rate = 5
-
-; Packet mean delay, usec
-; packet_mean_delay = 10
-
-; Packet delay variance
-; packet_delay_variance = 2

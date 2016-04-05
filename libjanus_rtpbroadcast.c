@@ -246,8 +246,6 @@ static struct {
 	gboolean recording_enabled;
 	gboolean simulate_bad_connection;
  	guint packet_loss_rate;
- 	guint packet_mean_delay;
- 	guint packet_delay_variance;
 	gboolean udp_relay_queue_enabled;
 } cm_rtpbcast_settings;
 
@@ -770,8 +768,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.recording_enabled = TRUE;
 	cm_rtpbcast_settings.simulate_bad_connection = FALSE;
 	cm_rtpbcast_settings.packet_loss_rate = 0;
-	cm_rtpbcast_settings.packet_mean_delay = 0;
-	cm_rtpbcast_settings.packet_delay_variance = 0;
 	cm_rtpbcast_settings.udp_relay_queue_enabled = FALSE;
 
 	mountpoints = g_hash_table_new_full(
@@ -815,8 +811,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"session_info_update_time",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
-				"packet_mean_delay",
-				"packet_delay_variance",
 				"udp_relay_interval",
 			};
 			guint *ivars [] = {
@@ -830,8 +824,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
-				&cm_rtpbcast_settings.packet_mean_delay,
-				&cm_rtpbcast_settings.packet_delay_variance,
 				&cm_rtpbcast_settings.udp_relay_interval,
 			};
 
