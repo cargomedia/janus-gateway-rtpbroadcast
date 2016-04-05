@@ -3390,16 +3390,22 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "listeners", json_integer(g_list_length(src->listeners)));
 	json_object_set_new(v, "waiters", json_integer(g_list_length(src->waiters)));
 
-	json_t *s = json_object();
+	json_t *audio_stream = json_object();
+	json_t *video_stream = json_object();
 	janus_mutex_lock(&src->stats.stat_mutex);
+	json_object_set_new(audio_stream, "cur_loss", json_real(src->stats.current_loss[AUDIO]));
+	json_object_set_new(audio_stream, "avg_loss", json_real(src->stats.average_loss[AUDIO]));
+	json_object_set_new(video_stream, "cur_loss", json_real(src->stats.current_loss[VIDEO]));
+	json_object_set_new(video_stream, "avg_loss", json_real(src->stats.average_loss[VIDEO]));
+	janus_mutex_unlock(&src->stats.stat_mutex);
+
+	json_t *s = json_object();
 	json_object_set_new(s, "min", json_real(src->stats.min));
 	json_object_set_new(s, "max", json_real(src->stats.max));
 	json_object_set_new(s, "cur", json_real(src->stats.cur));
 	json_object_set_new(s, "avg", json_real(src->stats.avg));
-	/* TODO: we average losess across video and audio @landswellsong */
-	json_object_set_new(s, "cur_loss", json_real((src->stats.current_loss[AUDIO]+src->stats.current_loss[VIDEO])/2.0));
-	json_object_set_new(s, "avg_loss", json_real((src->stats.average_loss[AUDIO]+src->stats.average_loss[VIDEO])/2.0));
-	janus_mutex_unlock(&src->stats.stat_mutex);
+	json_object_set_new(s, "audio", audio_stream);
+	json_object_set_new(s, "video", video_stream);
 	json_object_set_new(v, "stats", s);
 
 	json_t *f = json_object();
