@@ -13,7 +13,7 @@ Main extensions:
 - changes type of mountpoint `id` from `integer` to `string`
 - allows to create multiple streams (sources) per mountpoint
 - tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
-- extends RTP statistics for incoming streams
+- extends RTP statistics for incoming streams (bitrate, packets loss)
 - introduces `key-frame` based scheduling for stream and mountpoint switching
 - introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
 - pushes new media event to the subscriber if stream or mountpoint switched by `scheduler`
@@ -26,6 +26,7 @@ Main extensions:
 - introduces `switch-source` end point for switching the stream in the mountpoint
 - introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
 - introduces `superuser` end point which upgrades/downgrades session for receiving detailed admin info
+- introduces bad connection simulator (UDP packet loss) 
 
 Configuration
 -------------
@@ -82,6 +83,13 @@ Configuration
 
 ; Thumbnailing duration in seconds
 ; thumbnailing_duration = 10
+
+; Bad connection simulator, only for debug purpose
+; Note: defaults are 0, comment the options to disable
+; simulate_bad_connection = yes
+
+; Packet loss percentage
+; packet_loss_rate = 5
 ```
 
 #### Stream definition for responses
@@ -100,7 +108,15 @@ The response for multiple actions contains the `stream-definition` like follows:
       "min": "<float>",
       "max": "<float>",
       "cur": "<float>",
-      "avg": "<float>"
+      "avg": "<float>",
+      "audio": {
+         "cur_loss": "<float>",
+         "avg_loss": "<float>"
+      },
+      "video": {
+         "cur_loss": "<float>",
+         "avg_loss": "<float>"
+      }
    },
    "frame": {
       "width": "<int>",
@@ -118,7 +134,9 @@ The response for multiple actions contains the `stream-definition` like follows:
 
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
-- `session` is set only for `list` action and reference to current connection/session.
+- `session` is set only for `list` action and reference to current connection/session
+- `cur_loss` is an estimate of UDP packets loss for the window of last `source_avg_time seconds` as regular stats
+- `avg_loss` is an estimate of UDP packets loss for the whole time the connection is on
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
@@ -467,6 +485,17 @@ It sends updates with current state of mountpoints to the `superuser` sessions. 
   }
 }
 ```
+
+#### Bad connection simulator
+Randomly drops the UDP packets from incoming stream. Provides config file interface:
+
+- `simulate_bad_connection` : boolean
+
+Master switch, when set to yes, enables code for simulating packet drop.
+
+- `packet_loss_rate` : integer
+
+If bad connection simulator is enabled, specifies the percentage of packets which are artificially "lost".
 
 Clients support
 ---------------
