@@ -2497,34 +2497,6 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				//~ JANUS_LOG(LOG_VERB, " ... updated RTP packet (ssrc=%u, pt=%u, seq=%u, ts=%u)...\n",
 					//~ ntohl(rtp->ssrc), rtp->type, ntohs(rtp->seq_number), ntohl(rtp->timestamp));
 				packet.data->type = source->codecs.pt[j];
-				/* Is there a recorder? */
-				/* FIXME @landswellsong support arbitrary stream recording */
-				/* FIXME @landswellsong probably put mutexes around recorders */
-				if(nstream == 0 && mountpoint->rc[j]) {
-					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
-					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
-					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
-				}
-
-				if (mountpoint->recorded && nstream == 0 && j == VIDEO) {
-					/* Is it time to do thumbnailing? */
-					guint64 ml = janus_get_monotonic_time();
-					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
-						+ cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
-							cm_rtpbcast_start_thumbnailing(mountpoint);
-							mountpoint->last_thumbnail = ml;
-					}
-
-					/* After the call it might update */
-					if (mountpoint->trc[0])
-						janus_recorder_save_frame(mountpoint->trc[0], buffer, bytes);
-
-					/* Is it time to stop the thumbnailing? */
-					if (mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
-						+ cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
-						cm_rtpbcast_stop_thumbnailing(mountpoint);
-					}
-				}
 
 				/* Backup the actual timestamp and sequence number set by the restreamer, in case switching is involved */
 				packet.timestamp = ntohl(packet.data->timestamp);
@@ -2613,6 +2585,34 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 								source->frame_key_overdue = TRUE;
 							}
 						}
+					}
+				}
+
+				/* Is there a recorder? */
+				/* FIXME @landswellsong support arbitrary stream recording */
+				/* FIXME @landswellsong probably put mutexes around recorders */
+				if(nstream == 0 && mountpoint->rc[j]) {
+					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
+					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
+					janus_recorder_save_frame(mountpoint->rc[j], buffer, bytes);
+				}
+
+				if (mountpoint->recorded && nstream == 0 && j == VIDEO) {
+					/* Is it time to do thumbnailing? */
+					guint64 ml = janus_get_monotonic_time();
+					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
+							cm_rtpbcast_start_thumbnailing(mountpoint);
+							mountpoint->last_thumbnail = ml;
+					}
+
+					/* After the call it might update */
+					if (mountpoint->trc[0])
+						janus_recorder_save_frame(mountpoint->trc[0], buffer, bytes);
+
+					/* Is it time to stop the thumbnailing? */
+					if (mountpoint->trc[0] && (ml > mountpoint->last_thumbnail
+						+ cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
+						cm_rtpbcast_stop_thumbnailing(mountpoint);
 					}
 				}
 
@@ -3053,6 +3053,21 @@ static void cm_rtpbcast_generic_stop_recording(
 	if (res)
 		cm_rtpbcast_store_event(response, event_name);
 
+	/*
+		- it operates on mountpoint and not on specific source
+		TODO:
+		- maybe we need wrap janus_recorder struct with own structure? store type, frame count, keyframe count
+		- maybe wrap janus_recorder_save_frame()
+		- maybe wrap wrap janus_recorder_save_frame()
+		- maybe verify we have any keyframe: source->frame_key_overdue, source->frame_count, source->frame_key_distance, source->frame_key_last
+		- maybe we should not store thumbnail job and archive job if keyframe not there - how to find it out?
+				thumbnail_start_key_frame_count <= frame_key_last <= thumbnail_stop_key_frame_count
+			OR
+				maybe we should start thumbs only if keyframe arrives and store configurable number of frames in thumb?
+		- maybe we should clean up MJR files if job not created (cm-janus will not cleanup as jobfile is not there) - if frames count is 0 then cm_rtpbcast_source_mjrfile_cleaanup
+	*/
+
+
 	json_decref(response);
 }
 
@@ -3414,4 +3429,8 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "session", u);
 
 	return v;
+}
+
+int cm_rtpbcast_source_mjrfile_cleaanup(janus_recorder *recorders) {
+	return 0;
 }
