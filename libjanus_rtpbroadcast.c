@@ -1407,9 +1407,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			json_t *video = json_object();
 
 			json_object_set_new(audio, "port", json_integer(g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i)->port[AUDIO]));
-			json_object_set_new(audio, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
+			json_object_set_new(audio, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
 			json_object_set_new(video, "port", json_integer(g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i)->port[VIDEO]));
-			json_object_set_new(video, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
+			json_object_set_new(video, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
 
 			json_object_set_new(v, "audio", audio);
 			json_object_set_new(v, "video", video);
@@ -3482,9 +3482,9 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *audio = json_object();
 	json_t *video = json_object();
 	json_object_set_new(audio, "port", json_integer(src->port[AUDIO]));
-	json_object_set_new(audio, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
+	json_object_set_new(audio, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
 	json_object_set_new(video, "port", json_integer(src->port[VIDEO]));
-	json_object_set_new(video, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
+	json_object_set_new(video, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
 	json_object_set_new(v, "audio", audio);
 	json_object_set_new(v, "video", video);
 
@@ -3503,8 +3503,7 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *u = json_object();
 	json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
 	json_object_set_new(u, "autoswitch-enabled", json_integer(session->autoswitch));
-	json_object_set_new(u, "remb-avg", json_integer(session->remb));
-	json_object_set_new(u, "remb-avg-test", (session->remb == -1)? json_null() : json_integer(session->remb));
+	json_object_set_new(u, "remb-avg", (session->remb == -1)? json_null() : json_integer(session->remb));
 	json_object_set_new(v, "session", u);
 
 	return v;
