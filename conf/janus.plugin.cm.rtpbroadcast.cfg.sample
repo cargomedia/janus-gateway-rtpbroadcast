@@ -1,4 +1,8 @@
 [general]
+; Public interface of this instance. Can be set to FQDN or IP.
+; By default is empty and not included in any API response.
+; hostname =
+
 ; Port range for automatic port generation
 ; minport = 8000
 ; maxport = 9000
@@ -40,7 +44,7 @@
 ; recording_enabled = yes
 
 ; Path for recording and thumbnailing
-; archive_path = /tmp/recordings"
+; archive_path = /tmp/recordings
 
 ; printf pattern for recordings filenames
 ; Short usage, the following gets substituted:
