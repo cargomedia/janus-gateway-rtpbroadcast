@@ -75,8 +75,8 @@ def create(id=mountpoint_id, session=None):
     def helper(j):
         session["ports"] = []
         for i in j["plugindata"]["data"]["stream"]["streams"]:
-            session["ports"].append(i["audioport"])
-            session["ports"].append(i["videoport"])
+            session["ports"].append(i["audio"]["port"])
+            session["ports"].append(i["video"]["port"])
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
                 "body": {
@@ -119,15 +119,15 @@ def destroy(session=None):
                 endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
 
 # Streaming bitrates
-videorate_min = 20000
-videorate_max = 156000
-audiorate_min = 6000
-audiorate_max = 20000
+videorate_min = 128000
+videorate_max = 512000
+audiorate_min = 16000
+audiorate_max = 64000
 
 # Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
-keyframedist = 120
+keyframedist = 30
 
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max, session=None):
@@ -145,7 +145,7 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    opusenc bitrate=" + str(arate) + " ! "
             args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(session["ports"][i*2]) + "  "
             args+="  videotestsrc pattern = '" + pattern + "' ! "
-            args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
+            args+="    video/x-raw,width=640,height=480,framerate=30/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
             args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
