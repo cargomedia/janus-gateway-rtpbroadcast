@@ -100,22 +100,40 @@ The response for multiple actions contains the `stream-definition` like follows:
    "id": "<string>",
    "uid": "<string>",
    "index": "<int>",
-   "audioport": "<int>",
-   "videoport": "<int>",
+   "audio": {
+      "port": "<int>",
+      "host": "<string|null>"
+   },
+   "video": {
+      "port": "<int>",
+      "host": "<string|null>"
+   },
    "listeners": "<int>",
    "waiters": "<int>",
    "stats": {
-      "min": "<float>",
-      "max": "<float>",
-      "cur": "<float>",
-      "avg": "<float>",
       "audio": {
-         "cur_loss": "<float>",
-         "avg_loss": "<float>"
+          "bitrate": {
+              "max": "<int|null>",
+              "avg": "<int|null>",
+              "cur": "<int|null>",
+              "min": "<int|null>"
+          },
+          "udp-loss": {
+              "avg": "<int|null>",
+              "cur": "<int|null>"
+          }
       },
       "video": {
-         "cur_loss": "<float>",
-         "avg_loss": "<float>"
+          "bitrate": {
+              "max": "<int|null>",
+              "avg": "<int|null>",
+              "cur": "<int|null>",
+              "min": "<int|null>"
+          },
+          "udp-loss": {
+              "avg": "<int|null>",
+              "cur": "<int|null>"
+          }
       }
    },
    "frame": {
@@ -127,7 +145,7 @@ The response for multiple actions contains the `stream-definition` like follows:
    "session": {
       "webrtc-active": "<boolean>",
       "autoswitch-enabled": "<boolean>",
-      "remb-avg": "<int>"
+      "remb-avg": "<int|null>"
    }
 }
 ```
@@ -196,8 +214,14 @@ It responses with auto generated port number for audio and video using `minport`
     "description": "<string>",
     "streams": [
       {
-        "audioport": "<int>",
-        "videoport": "<int>",
+        "audio": {
+          "port": "<int>",
+          "host": "<string>"
+         },
+        "video": {
+          "port": "<int>",
+          "host": "<string>"
+         }
       }
     ]
   }
