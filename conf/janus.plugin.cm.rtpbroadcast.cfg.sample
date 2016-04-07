@@ -1,7 +1,6 @@
 [general]
-; Public interface of this instance. Can be set to FQDN or IP.
-; By default is empty and not included in any API response.
-; hostname =
+; Hostname to use. Will be used in API responses.
+; hostname = localhost
 
 ; Port range for automatic port generation
 ; minport = 8000
