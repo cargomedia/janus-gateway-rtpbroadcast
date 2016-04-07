@@ -76,6 +76,7 @@ def create(id=mountpoint_id, session=None):
     session = session or definstance
     def helper(j):
         session["ports"] = []
+        session["hosts"] = []
         for i in j["plugindata"]["data"]["stream"]["streams"]:
             session["ports"].append(i["audio"]["port"])
             session["hosts"].append(i["audio"]["host"])
