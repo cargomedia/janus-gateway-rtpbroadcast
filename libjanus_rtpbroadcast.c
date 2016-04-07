@@ -3466,7 +3466,7 @@ json_t *cm_rtpbcast_source_stats_to_json(cm_rtpbcast_rtp_source *src) {
 		janus_mutex_unlock(&src->stats[j].stat_mutex);
 
 		json_object_set_new(v, "bitrate", b);
-		json_object_set_new(v, "udp-loss", u);
+		json_object_set_new(v, "packet-loss", u);
 		json_object_set_new(s, lnames[j], v);
 	}
 	return s;

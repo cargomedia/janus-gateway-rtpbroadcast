@@ -121,7 +121,7 @@ The response for multiple actions contains the `stream-definition` like follows:
               "cur": "<int|null>",
               "min": "<int|null>"
           },
-          "udp-loss": {
+          "packet-loss": {
               "avg": "<int|null>",
               "cur": "<int|null>"
           }
@@ -133,7 +133,7 @@ The response for multiple actions contains the `stream-definition` like follows:
               "cur": "<int|null>",
               "min": "<int|null>"
           },
-          "udp-loss": {
+          "packet-loss": {
               "avg": "<int|null>",
               "cur": "<int|null>"
           }
