@@ -32,6 +32,9 @@ Configuration
 -------------
 ```
 [general]
+; Hostname to use. Will be used in API responses.
+; hostname = localhost
+
 ; Port range for automatic port generation
 ; minport = 8000
 ; maxport = 9000
