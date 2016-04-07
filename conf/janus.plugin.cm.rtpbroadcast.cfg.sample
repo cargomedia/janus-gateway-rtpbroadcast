@@ -1,4 +1,7 @@
 [general]
+; Hostname to use. Will be used in API responses.
+; hostname = localhost
+
 ; Port range for automatic port generation
 ; minport = 8000
 ; maxport = 9000
@@ -40,7 +43,7 @@
 ; recording_enabled = yes
 
 ; Path for recording and thumbnailing
-; archive_path = /tmp/recordings"
+; archive_path = /tmp/recordings
 
 ; printf pattern for recordings filenames
 ; Short usage, the following gets substituted:

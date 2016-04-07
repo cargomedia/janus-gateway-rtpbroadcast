@@ -32,6 +32,9 @@ Configuration
 -------------
 ```
 [general]
+; Hostname to use. Will be used in API responses.
+; hostname = localhost
+
 ; Port range for automatic port generation
 ; minport = 8000
 ; maxport = 9000
@@ -100,22 +103,44 @@ The response for multiple actions contains the `stream-definition` like follows:
    "id": "<string>",
    "uid": "<string>",
    "index": "<int>",
-   "audioport": "<int>",
-   "videoport": "<int>",
-   "listeners": "<int>",
-   "waiters": "<int>",
+   "rtp-endpoint": {
+     "audio": {
+        "port": "<int>",
+        "host": "<string>"
+     },
+     "video": {
+        "port": "<int>",
+        "host": "<string>"
+     },
+   },
+   "webrtc-endpoint": {
+    "listeners": "<int>",
+    "waiters": "<int>",
+   },
    "stats": {
-      "min": "<float>",
-      "max": "<float>",
-      "cur": "<float>",
-      "avg": "<float>",
       "audio": {
-         "cur_loss": "<float>",
-         "avg_loss": "<float>"
+          "bitrate": {
+              "max": "<int|null>",
+              "avg": "<int|null>",
+              "cur": "<int|null>",
+              "min": "<int|null>"
+          },
+          "packet-loss": {
+              "avg": "<int|null>",
+              "cur": "<int|null>"
+          }
       },
       "video": {
-         "cur_loss": "<float>",
-         "avg_loss": "<float>"
+          "bitrate": {
+              "max": "<int|null>",
+              "avg": "<int|null>",
+              "cur": "<int|null>",
+              "min": "<int|null>"
+          },
+          "packet-loss": {
+              "avg": "<int|null>",
+              "cur": "<int|null>"
+          }
       }
    },
    "frame": {
@@ -127,7 +152,7 @@ The response for multiple actions contains the `stream-definition` like follows:
    "session": {
       "webrtc-active": "<boolean>",
       "autoswitch-enabled": "<boolean>",
-      "remb-avg": "<int>"
+      "remb-avg": "<int|null>"
    }
 }
 ```
@@ -135,8 +160,8 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session
-- `cur_loss` is an estimate of UDP packets loss for the window of last `source_avg_time` seconds as regular stats
-- `avg_loss` is an estimate of UDP packets loss for the whole time the connection is on
+- `packet-loss/cur` is an estimate of UDP packets loss for the window of last `source_avg_time` seconds as regular stats
+- `packet-loss/avg` is an estimate of UDP packets loss for the whole time the connection is on
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
@@ -196,8 +221,14 @@ It responses with auto generated port number for audio and video using `minport`
     "description": "<string>",
     "streams": [
       {
-        "audioport": "<int>",
-        "videoport": "<int>",
+        "audio": {
+          "port": "<int>",
+          "host": "<string>"
+         },
+        "video": {
+          "port": "<int>",
+          "host": "<string>"
+         }
       }
     ]
   }

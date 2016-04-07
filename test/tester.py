@@ -3,13 +3,15 @@
 
 import requests, json, subprocess, time
 
-janus_url = "http://localhost:8088/janus"
-mountpoint_id = "Ababagalamaga"
+janus_http = '127.0.0.1'
+janus_url = "http://" + str(janus_http) + ":8088/janus"
 
+mountpoint_id = "Ababagalamaga"
 insttemplate = {
     "session_id" : None,
     "handle_id" : None,
     "ports" : None,
+    "hosts" : None,
     "streamer" : None,
 }
 
@@ -74,9 +76,12 @@ def create(id=mountpoint_id, session=None):
     session = session or definstance
     def helper(j):
         session["ports"] = []
+        session["hosts"] = []
         for i in j["plugindata"]["data"]["stream"]["streams"]:
-            session["ports"].append(i["audioport"])
-            session["ports"].append(i["videoport"])
+            session["ports"].append(i["audio"]["port"])
+            session["hosts"].append(i["audio"]["host"])
+            session["ports"].append(i["video"]["port"])
+            session["hosts"].append(i["video"]["host"])
     janus_cmd({ "janus": "message",
                 "transaction": "tester.py",
                 "body": {
@@ -119,15 +124,15 @@ def destroy(session=None):
                 endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
 
 # Streaming bitrates
-videorate_min = 20000
-videorate_max = 156000
-audiorate_min = 6000
-audiorate_max = 20000
+videorate_min = 128000
+videorate_max = 512000
+audiorate_min = 16000
+audiorate_max = 64000
 
 # Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
-keyframedist = 120
+keyframedist = 30
 
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max, session=None):
@@ -143,13 +148,13 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="  audiotestsrc !  "
             args+="    audioresample ! audio/x-raw,channels=1,rate=16000 ! "
             args+="    opusenc bitrate=" + str(arate) + " ! "
-            args+="      rtpopuspay ! udpsink host=127.0.0.1 port=" + str(session["ports"][i*2]) + "  "
+            args+="      rtpopuspay ! udpsink host=" + str(session["hosts"][i*2]) + " port=" + str(session["ports"][i*2]) + "  "
             args+="  videotestsrc pattern = '" + pattern + "' ! "
-            args+="    video/x-raw,width=320,height=240,framerate=15/1 ! "
+            args+="    video/x-raw,width=640,height=480,framerate=30/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
             args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
-            args+="      rtpvp8pay ! udpsink host=127.0.0.1 port=" + str(session["ports"][i*2 + 1]) + " "
+            args+="      rtpvp8pay ! udpsink host=" + str(session["hosts"][i*2]) + " port=" + str(session["ports"][i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
         session["streamer"] = subprocess.Popen(args, shell=True)
