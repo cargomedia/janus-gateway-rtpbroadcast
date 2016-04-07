@@ -2870,7 +2870,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Updating min max */
 		if (st->cur > st->max)
 			st->max = st->cur;
-		if (st->cur < st->min || st->min == -1.0L)
+		if (st->cur < st->min || (st->min == -1.0L && st->cur != 0))
 			st->min = st->cur;
 
 		/* Estimate packet loss */
