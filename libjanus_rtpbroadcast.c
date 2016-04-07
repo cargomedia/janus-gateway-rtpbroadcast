@@ -2816,12 +2816,12 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
 
-	st->min = -1;
-	st->max = -1;
-	st->cur = -1;
-	st->avg = -1;
-	st->average_loss = -1;
-	st->current_loss = -1;
+	st->min = -1.0;
+	st->max = -1.0;
+	st->cur = -1.0;
+	st->avg = -1.0;
+	st->average_loss = -1.0;
+	st->current_loss = -1.0;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -2870,7 +2870,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Updating min max */
 		if (st->cur > st->max)
 			st->max = st->cur;
-		if (st->cur < st->min || st->min == 0.0L)
+		if (st->cur < st->min || st->min == -1.0L)
 			st->min = st->cur;
 
 		/* Estimate packet loss */
