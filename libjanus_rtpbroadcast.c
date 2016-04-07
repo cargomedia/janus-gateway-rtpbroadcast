@@ -757,7 +757,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		janus_config_print(config);
 
 	/* Defauts */
-	cm_rtpbcast_settings.hostname = NULL;
+	cm_rtpbcast_settings.hostname = g_strdup("localhost");
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.source_avg_time = 10;
@@ -765,7 +765,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.session_info_update_time = 10;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
-	cm_rtpbcast_settings.job_path =  g_strdup("/tmp/jobs");
+	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
@@ -1407,9 +1407,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			json_t *video = json_object();
 
 			json_object_set_new(audio, "port", json_integer(g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i)->port[AUDIO]));
-			json_object_set_new(audio, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
+			json_object_set_new(audio, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
 			json_object_set_new(video, "port", json_integer(g_array_index(mp->sources, cm_rtpbcast_rtp_source*, i)->port[VIDEO]));
-			json_object_set_new(video, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
+			json_object_set_new(video, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
 
 			json_object_set_new(v, "audio", audio);
 			json_object_set_new(v, "video", video);
@@ -3482,9 +3482,9 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *audio = json_object();
 	json_t *video = json_object();
 	json_object_set_new(audio, "port", json_integer(src->port[AUDIO]));
-	json_object_set_new(audio, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
+	json_object_set_new(audio, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
 	json_object_set_new(video, "port", json_integer(src->port[VIDEO]));
-	json_object_set_new(video, "host", (cm_rtpbcast_settings.hostname) ? json_string(g_strdup(cm_rtpbcast_settings.hostname)) : json_null());
+	json_object_set_new(video, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
 	json_object_set_new(v, "audio", audio);
 	json_object_set_new(v, "video", video);
 
