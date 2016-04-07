@@ -2882,6 +2882,8 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 				st->current_loss = 0.0;
 			st->packets_since_last_avg = 0;
 			st->last_avg_seq = st->max_seq_since_last_avg;
+		} else {
+			st->current_loss = -1.0;
 		}
 	}
 
@@ -3456,17 +3458,12 @@ json_t *cm_rtpbcast_source_stats_to_json(cm_rtpbcast_rtp_source *src) {
 		json_t *v = json_object();
 		json_t *b = json_object();
 		json_t *u = json_object();
+
 		janus_mutex_lock(&src->stats[j].stat_mutex);
-		json_object_set_new(b, "min", (src->stats[j].min == -1) ? json_null() : json_real(src->stats[j].min));
-		json_object_set_new(b, "max", (src->stats[j].max == -1) ? json_null() : json_real(src->stats[j].max));
-		json_object_set_new(b, "cur", (src->stats[j].cur == -1) ? json_null() : json_real(src->stats[j].cur));
-		json_object_set_new(b, "avg", (src->stats[j].avg == -1) ? json_null() : json_real(src->stats[j].avg));
-		json_object_set_new(u, "cur", (src->stats[j].current_loss == -1) ? json_null() : json_real(src->stats[j].current_loss));
-		json_object_set_new(u, "avg", (src->stats[j].average_loss == -1) ? json_null() : json_real(src->stats[j].average_loss));
+		json_object_set_new(v, "bitrate", (src->stats[j].cur == -1) ? json_null() : json_real(src->stats[j].cur));
+		json_object_set_new(v, "packet-loss", (src->stats[j].current_loss == -1) ? json_null() : json_real(src->stats[j].current_loss));
 		janus_mutex_unlock(&src->stats[j].stat_mutex);
 
-		json_object_set_new(v, "bitrate", b);
-		json_object_set_new(v, "packet-loss", u);
 		json_object_set_new(s, lnames[j], v);
 	}
 	return s;
