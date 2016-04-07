@@ -3479,17 +3479,21 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "uid", json_string(src->mp->uid));
 	json_object_set_new(v, "index", json_integer(src->index));
 
+	json_t *rtp = json_object();
 	json_t *audio = json_object();
 	json_t *video = json_object();
 	json_object_set_new(audio, "port", json_integer(src->port[AUDIO]));
 	json_object_set_new(audio, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
 	json_object_set_new(video, "port", json_integer(src->port[VIDEO]));
 	json_object_set_new(video, "host", json_string(g_strdup(cm_rtpbcast_settings.hostname)));
-	json_object_set_new(v, "audio", audio);
-	json_object_set_new(v, "video", video);
+	json_object_set_new(rtp, "audio", audio);
+	json_object_set_new(rtp, "video", video);
+	json_object_set_new(v, "rtp-endpoint", rtp);
 
-	json_object_set_new(v, "listeners", json_integer(g_list_length(src->listeners)));
-	json_object_set_new(v, "waiters", json_integer(g_list_length(src->waiters)));
+	json_t *rtc = json_object();
+	json_object_set_new(rtc, "listeners", json_integer(g_list_length(src->listeners)));
+	json_object_set_new(rtc, "waiters", json_integer(g_list_length(src->waiters)));
+	json_object_set_new(v, "webrtc-endpoint", rtc);
 
 	json_object_set_new(v, "stats", cm_rtpbcast_source_stats_to_json(src));
 

@@ -103,16 +103,20 @@ The response for multiple actions contains the `stream-definition` like follows:
    "id": "<string>",
    "uid": "<string>",
    "index": "<int>",
-   "audio": {
-      "port": "<int>",
-      "host": "<string|null>"
+   "rtp-endpoint": {
+     "audio": {
+        "port": "<int>",
+        "host": "<string>"
+     },
+     "video": {
+        "port": "<int>",
+        "host": "<string>"
+     },
    },
-   "video": {
-      "port": "<int>",
-      "host": "<string|null>"
+   "webrtc-endpoint": {
+    "listeners": "<int>",
+    "waiters": "<int>",
    },
-   "listeners": "<int>",
-   "waiters": "<int>",
    "stats": {
       "audio": {
           "bitrate": {
