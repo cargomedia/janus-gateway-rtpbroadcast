@@ -126,8 +126,8 @@ The response for multiple actions contains the `stream-definition` like follows:
               "min": "<int|null>"
           },
           "packet-loss": {
-              "avg": "<int|null>",
-              "cur": "<int|null>"
+              "avg": "<float|null>",
+              "cur": "<float|null>"
           }
       },
       "video": {
@@ -138,8 +138,8 @@ The response for multiple actions contains the `stream-definition` like follows:
               "min": "<int|null>"
           },
           "packet-loss": {
-              "avg": "<int|null>",
-              "cur": "<int|null>"
+              "avg": "<float|null>",
+              "cur": "<float|null>"
           }
       }
    },
