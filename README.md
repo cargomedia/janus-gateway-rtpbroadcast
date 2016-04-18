@@ -6,27 +6,7 @@ janus-gateway-rtpbroadcast
 
 Overview
 --------
-This plugin is based on native `janus` streaming plugin. It drops support for `LIVE`, `RTSP`, `VOD` and extends support for `RTP` streaming.
-
-Main extensions:
-- renames plugin with `janus.plugin.cm.rtpbroadcast`
-- changes type of mountpoint `id` from `integer` to `string`
-- allows to create multiple streams (sources) per mountpoint
-- tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
-- extends RTP statistics for incoming streams (bitrate, packets loss)
-- introduces `key-frame` based scheduling for stream and mountpoint switching
-- introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
-- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler`
-- allows to manually switch the stream or turn off the `auto-switch`
-- introduce IP based white-listing for incoming RTP packages
-- automatically records the first provided stream (per mountpoint) into configurable archives
-- dumps stream RTP payload into configurable thumbnailer archives
-- creates job files and store events like new `archive-finished` or `thumbnailing-finished`
-- introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
-- introduces `switch-source` end point for switching the stream in the mountpoint
-- introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
-- introduces `superuser` end point which upgrades/downgrades session for receiving detailed admin info
-- introduces bad connection simulator (UDP packet loss) 
+This plugin provides extended support for `RTP` streaming.
 
 Configuration
 -------------
@@ -535,3 +515,7 @@ to generate the `configure` script.
 make
 make install
 ```
+
+Packages
+--------
+Please find [DEB packages](https://github.com/cargomedia/debian-packages) for this plugin.
