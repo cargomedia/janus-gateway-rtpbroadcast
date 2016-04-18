@@ -258,10 +258,7 @@ typedef struct cm_rtpbcast_codecs {
 
 #define STAT_SECOND 1000000
 typedef struct cm_rtpbcast_stats {
-	gdouble min;
-	gdouble max;
 	gdouble cur;
-	gdouble avg;
 
 	/* FIXME do we need minmax here? */
 	gdouble average_loss;
@@ -2816,10 +2813,7 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
 
-	st->min = -1.0;
-	st->max = -1.0;
 	st->cur = -1.0;
-	st->avg = -1.0;
 	st->average_loss = -1.0;
 	st->current_loss = -1.0;
 
@@ -2867,11 +2861,6 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Reset timer */
 		st->bytes_since_last_avg  = 0;
 		st->last_avg_usec = ml;
-		/* Updating min max */
-		if (st->cur > st->max)
-			st->max = st->cur;
-		if (st->cur < st->min || (st->min == -1.0L && st->cur != 0))
-			st->min = st->cur;
 
 		/* Estimate packet loss */
 		if (isvideo != -1) {
@@ -2888,9 +2877,6 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 	}
 
 	/* Re-calculate average regardless */
-	delay = ml - st->start_usec;
-	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (delay != 0 ? delay : 1);
-
 	if (isvideo != -1) {
 		guint32 den = st->max_seq_since_last_avg - st->start_seq + 1;
 		if (den != 0)
@@ -2919,7 +2905,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
-		source_bw = (guint64)src->stats[VIDEO].avg;
+		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
 		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
