@@ -258,10 +258,7 @@ typedef struct cm_rtpbcast_codecs {
 
 #define STAT_SECOND 1000000
 typedef struct cm_rtpbcast_stats {
-	gdouble min;
-	gdouble max;
 	gdouble cur;
-	gdouble avg;
 
 	/* FIXME do we need minmax here? */
 	gdouble average_loss;
@@ -2816,10 +2813,7 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	st->start_usec = ml;
 	st->last_avg_usec = ml;
 
-	st->min = -1.0;
-	st->max = -1.0;
 	st->cur = -1.0;
-	st->avg = -1.0;
 	st->average_loss = -1.0;
 	st->current_loss = -1.0;
 
@@ -2867,11 +2861,6 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Reset timer */
 		st->bytes_since_last_avg  = 0;
 		st->last_avg_usec = ml;
-		/* Updating min max */
-		if (st->cur > st->max)
-			st->max = st->cur;
-		if (st->cur < st->min || (st->min == -1.0L && st->cur != 0))
-			st->min = st->cur;
 
 		/* Estimate packet loss */
 		if (isvideo != -1) {
@@ -2882,13 +2871,12 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 				st->current_loss = 0.0;
 			st->packets_since_last_avg = 0;
 			st->last_avg_seq = st->max_seq_since_last_avg;
+		} else {
+			st->current_loss = -1.0;
 		}
 	}
 
 	/* Re-calculate average regardless */
-	delay = ml - st->start_usec;
-	st->avg = (8.0L*10e5L)*(gdouble)st->bytes_since_start / (delay != 0 ? delay : 1);
-
 	if (isvideo != -1) {
 		guint32 den = st->max_seq_since_last_avg - st->start_seq + 1;
 		if (den != 0)
@@ -2917,7 +2905,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	for (i = 0; i < sources->len; i++) {
 		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
-		source_bw = (guint64)src->stats[VIDEO].avg;
+		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
 		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
@@ -3456,17 +3444,12 @@ json_t *cm_rtpbcast_source_stats_to_json(cm_rtpbcast_rtp_source *src) {
 		json_t *v = json_object();
 		json_t *b = json_object();
 		json_t *u = json_object();
+
 		janus_mutex_lock(&src->stats[j].stat_mutex);
-		json_object_set_new(b, "min", (src->stats[j].min == -1) ? json_null() : json_real(src->stats[j].min));
-		json_object_set_new(b, "max", (src->stats[j].max == -1) ? json_null() : json_real(src->stats[j].max));
-		json_object_set_new(b, "cur", (src->stats[j].cur == -1) ? json_null() : json_real(src->stats[j].cur));
-		json_object_set_new(b, "avg", (src->stats[j].avg == -1) ? json_null() : json_real(src->stats[j].avg));
-		json_object_set_new(u, "cur", (src->stats[j].current_loss == -1) ? json_null() : json_real(src->stats[j].current_loss));
-		json_object_set_new(u, "avg", (src->stats[j].average_loss == -1) ? json_null() : json_real(src->stats[j].average_loss));
+		json_object_set_new(v, "bitrate", (src->stats[j].cur == -1) ? json_null() : json_real(src->stats[j].cur));
+		json_object_set_new(v, "packet-loss", (src->stats[j].current_loss == -1) ? json_null() : json_real(src->stats[j].current_loss));
 		janus_mutex_unlock(&src->stats[j].stat_mutex);
 
-		json_object_set_new(v, "bitrate", b);
-		json_object_set_new(v, "packet-loss", u);
 		json_object_set_new(s, lnames[j], v);
 	}
 	return s;

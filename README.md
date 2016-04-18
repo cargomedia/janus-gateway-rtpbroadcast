@@ -119,28 +119,12 @@ The response for multiple actions contains the `stream-definition` like follows:
    },
    "stats": {
       "audio": {
-          "bitrate": {
-              "max": "<int|null>",
-              "avg": "<int|null>",
-              "cur": "<int|null>",
-              "min": "<int|null>"
-          },
-          "packet-loss": {
-              "avg": "<float|null>",
-              "cur": "<float|null>"
-          }
+          "bitrate": "<int|null>",
+          "packet-loss": "<float|null>"
       },
       "video": {
-          "bitrate": {
-              "max": "<int|null>",
-              "avg": "<int|null>",
-              "cur": "<int|null>",
-              "min": "<int|null>"
-          },
-          "packet-loss": {
-              "avg": "<float|null>",
-              "cur": "<float|null>"
-          }
+          "bitrate": "<int|null>",
+          "packet-loss": "<float|null>"
       }
    },
    "frame": {
