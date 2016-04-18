@@ -153,7 +153,7 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    video/x-raw,width=640,height=480,framerate=30/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
-            args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " error-resilient=true target-bitrate=" + str(vrate) + " ! "
+            args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " target-bitrate=" + str(vrate) + " ! "
             args+="      rtpvp8pay ! udpsink host=" + str(session["hosts"][i*2]) + " port=" + str(session["ports"][i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
