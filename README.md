@@ -143,8 +143,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session
-- `packet-loss/cur` is an estimate of UDP packets loss for the window of last `source_avg_time` seconds as regular stats
-- `packet-loss/avg` is an estimate of UDP packets loss for the whole time the connection is on
+- `packet-loss` is an estimate of UDP packets loss for the window of last `mountpoint_info_interval` seconds as regular stats
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
@@ -483,6 +482,8 @@ used for calculating statistics.
   }
 }
 ```
+- `source_avg_duration` is equal to `mountpoint_info_interval` of config file.
+- `remb_avg_duration` is equal to `remb_avg_time` of config file.
 
 #### Mountpoints information event
 It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
