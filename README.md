@@ -39,15 +39,14 @@ Configuration
 ; minport = 8000
 ; maxport = 9000
 
-; Source bitrate averaging interval, seconds
-; source_avg_time = 10
+; Source bitrate averaging interval and
+; session streams status update interval, seconds
+; mountpoint_info_interval = 10
+
 ; Watcher REMB averageing interval, seconds
 ; remb_avg_time = 3
 ; Switching interval, seconds
 ; switching_delay = 1
-
-; Session streams status update interval, seconds
-; session_info_update_time = 10
 
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
