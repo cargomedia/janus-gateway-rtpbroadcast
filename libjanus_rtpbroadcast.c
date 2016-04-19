@@ -238,10 +238,9 @@ static struct {
 	const char *thumbnailing_pattern;
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
-	guint source_avg_time;
+	guint mountpoint_info_interval;
 	guint remb_avg_time;
 	guint switching_delay;
-	guint session_info_update_time;
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
 	gboolean recording_enabled;
@@ -667,7 +666,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 			}
 		}
 
-		if (now-session_update >= cm_rtpbcast_settings.session_info_update_time * G_USEC_PER_SEC) {
+		if (now-session_update >= cm_rtpbcast_settings.mountpoint_info_interval * G_USEC_PER_SEC) {
 			if(sessions && g_hash_table_size(sessions) > 0) {
 				GHashTableIter iter;
 				gpointer value;
@@ -688,7 +687,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 						json_object_set_new(result, "streams", st);
 
 						json_t *config = json_object();
-						json_object_set_new(config, "source_avg_duration", json_integer(cm_rtpbcast_settings.source_avg_time));
+						json_object_set_new(config, "source_avg_duration", json_integer(cm_rtpbcast_settings.mountpoint_info_interval));
 						json_object_set_new(config, "remb_avg_duration", json_integer(cm_rtpbcast_settings.remb_avg_time));
 						json_object_set_new(result, "config", config);
 
@@ -757,10 +756,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.hostname = g_strdup("localhost");
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
-	cm_rtpbcast_settings.source_avg_time = 10;
+	cm_rtpbcast_settings.mountpoint_info_interval = 10;
 	cm_rtpbcast_settings.remb_avg_time = 3;
 	cm_rtpbcast_settings.switching_delay = 1;
-	cm_rtpbcast_settings.session_info_update_time = 10;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
@@ -810,10 +808,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"maxport",
 				"thumbnailing_interval",
 				"thumbnailing_duration",
-				"source_avg_time",
+				"mountpoint_info_interval",
 				"remb_avg_time",
 				"switching_delay",
-				"session_info_update_time",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
 				"udp_relay_interval",
@@ -823,10 +820,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.maxport,
 				&cm_rtpbcast_settings.thumbnailing_interval,
 				&cm_rtpbcast_settings.thumbnailing_duration,
-				&cm_rtpbcast_settings.source_avg_time,
+				&cm_rtpbcast_settings.mountpoint_info_interval,
 				&cm_rtpbcast_settings.remb_avg_time,
 				&cm_rtpbcast_settings.switching_delay,
-				&cm_rtpbcast_settings.session_info_update_time,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
 				&cm_rtpbcast_settings.udp_relay_interval,
@@ -2853,7 +2849,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 	guint64 delay;
 
 	/* If we step over delay, calculate current and compare min/max */
-	if (ml - st->last_avg_usec >= cm_rtpbcast_settings.source_avg_time * STAT_SECOND) {
+	if (ml - st->last_avg_usec >= cm_rtpbcast_settings.mountpoint_info_interval * STAT_SECOND) {
 		/* Calculate */
 		delay = ml - st->last_avg_usec;
 		st->cur = (8.0L*10e5L)*(gdouble)st->bytes_since_last_avg / (delay != 0 ? delay : 1);
