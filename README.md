@@ -44,7 +44,7 @@ Configuration
 ; mountpoint_info_interval = 10
 
 ; Watcher REMB averageing interval, seconds
-; remb_avg_time = 3
+; remb_avg_interval = 3
 ; Switching interval, seconds
 ; switching_delay = 1
 
@@ -476,14 +476,14 @@ used for calculating statistics.
       "<stream-definition-N>",
     ],
     "config": {
-      "source_avg_duration": "<int>",
-      "remb_avg_duration": "<int>"
+      "mountpoint-info-interval": "<int>",
+      "remb-avg-interval": "<int>"
     }
   }
 }
 ```
-- `source_avg_duration` is equal to `mountpoint_info_interval` of config file.
-- `remb_avg_duration` is equal to `remb_avg_time` of config file.
+- `mountpoint-info-interval` is equal to `mountpoint_info_interval` of config file.
+- `remb-avg-interval` is equal to `remb_avg_interval` of config file.
 
 #### Mountpoints information event
 It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
