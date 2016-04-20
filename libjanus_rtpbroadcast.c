@@ -239,7 +239,7 @@ static struct {
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
 	guint mountpoint_info_interval;
-	guint remb_avg_time;
+	guint remb_avg_interval;
 	guint switching_delay;
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
@@ -687,8 +687,8 @@ void *cm_rtpbcast_watchdog(void *data) {
 						json_object_set_new(result, "streams", st);
 
 						json_t *config = json_object();
-						json_object_set_new(config, "source_avg_duration", json_integer(cm_rtpbcast_settings.mountpoint_info_interval));
-						json_object_set_new(config, "remb_avg_duration", json_integer(cm_rtpbcast_settings.remb_avg_time));
+						json_object_set_new(config, "mountpoint-info-interval", json_integer(cm_rtpbcast_settings.mountpoint_info_interval));
+						json_object_set_new(config, "remb-avg-interval", json_integer(cm_rtpbcast_settings.remb_avg_interval));
 						json_object_set_new(result, "config", config);
 
 						json_object_set_new(event, "result", result);
@@ -757,7 +757,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
-	cm_rtpbcast_settings.remb_avg_time = 3;
+	cm_rtpbcast_settings.remb_avg_interval = 3;
 	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
@@ -809,7 +809,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"thumbnailing_interval",
 				"thumbnailing_duration",
 				"mountpoint_info_interval",
-				"remb_avg_time",
+				"remb_avg_interval",
 				"switching_delay",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
@@ -821,7 +821,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.thumbnailing_interval,
 				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.mountpoint_info_interval,
-				&cm_rtpbcast_settings.remb_avg_time,
+				&cm_rtpbcast_settings.remb_avg_interval,
 				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
@@ -1609,7 +1609,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		if (!sessid->last_remb_usec) {
 			sessid->last_remb_usec = ml;
 		/* Otherwise check if we stepped out */
-		} else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_time * STAT_SECOND) {
+		} else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_interval * STAT_SECOND) {
 			/* Calculate average */
 			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
 
