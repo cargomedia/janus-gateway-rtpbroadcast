@@ -48,6 +48,13 @@ Configuration
 ; Switching interval, seconds
 ; switching_delay = 1
 
+; UDP queuing allows to pool up packets and send them from separate threads
+; Alternative is sending the packets from the thread they are received from
+; udp_relay_queue_enabled = no
+
+; Interval at which UDP relay thread should wake up and process the queue, microseconds
+; udp_relay_interval = 50000
+
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
