@@ -3223,7 +3223,7 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 		}
 
 		/* If it's recording, stop it */
-		if(mp->rc[AUDIO]->r || mp->rc[VIDEO]->r)
+		if(mp->rc[AUDIO] && mp->rc[AUDIO]->r || mp->rc[VIDEO] && mp->rc[VIDEO]->r)
 			cm_rtpbcast_stop_recording(mp, 0);
 
 		if(mp->trc[0] && mp->trc[0]->r)
