@@ -2841,8 +2841,11 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		}
 
 		/* Reset mas stored sequence number on overflow */
-		if (st->max_seq_since_last_avg == 65535)
+		if (seq == 65535) {
 			st->max_seq_since_last_avg = 0;
+			st->last_avg_seq = 0;
+			st->packets_since_last_avg = 0;
+		}
 
 		/* Make sure to count the biggest seq number we've seen in this
 		 * averaging interval to counter reordering */
@@ -2851,8 +2854,11 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 
 		/* Make sure that we reset the max stored sequence number if the
 		 * overflows occurs. This is double check mechanism. */
-		if (st->max_seq_since_last_avg > seq)
+		if (st->max_seq_since_last_avg > seq) {
 			st->max_seq_since_last_avg = seq;
+			st->last_avg_seq = 0;
+			st->packets_since_last_avg = seq;
+		}
 	}
 
 	guint64 ml = janus_get_monotonic_time();
@@ -2870,8 +2876,8 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 
 		/* Estimate packet loss */
 		if (isvideo != -1) {
-			guint32 den = st->max_seq_since_last_avg - st->last_avg_seq + 1;
-			if (den != 0)
+			guint32 den = st->max_seq_since_last_avg - st->last_avg_seq;
+			if (den != 0 && st->packets_since_last_avg < den)
 				st->current_loss = 1.0 - (gdouble)st->packets_since_last_avg / (gdouble) den;
 			else
 				st->current_loss = 0.0;
@@ -2885,7 +2891,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 	/* Re-calculate average regardless */
 	if (isvideo != -1) {
 		guint32 den = st->max_seq_since_last_avg - st->start_seq + 1;
-		if (den != 0)
+		if (den != 0 && st->packets_since_start < den)
 			st->average_loss = 1.0 - (gdouble)st->packets_since_start / (gdouble) den;
 		else
 			st->average_loss = 0.0;
