@@ -2853,7 +2853,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		 * overflows occurs. This is double check mechanism. */
 		if (st->max_seq_since_last_avg > seq) {
 			st->max_seq_since_last_avg = st->packets_since_last_avg = seq;
-			st->last_avg_seq = 0;Formatting
+			st->last_avg_seq = 0;
 		}
 	}
 
