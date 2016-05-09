@@ -2840,7 +2840,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 				st->packets_since_last_avg++;
 		}
 
-		/* Reset mas stored sequence number on overflow */
+		/* Reset max sequence number stored on overflow */
 		if (seq == 65535)
 			st->max_seq_since_last_avg = st->last_avg_seq = st->packets_since_last_avg = 0;
 
@@ -2850,7 +2850,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 			st->max_seq_since_last_avg = seq;
 
 		/* Make sure that we reset the max stored sequence number if the
-		 * overflows occurs. This is double check mechanism. */
+		 * overflows occurs. This is double check mechanism if 65535 is lost. */
 		if (st->max_seq_since_last_avg > seq) {
 			st->max_seq_since_last_avg = st->packets_since_last_avg = seq;
 			st->last_avg_seq = 0;
