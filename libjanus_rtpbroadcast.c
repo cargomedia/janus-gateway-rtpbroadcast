@@ -2841,11 +2841,8 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		}
 
 		/* Reset mas stored sequence number on overflow */
-		if (seq == 65535) {
-			st->max_seq_since_last_avg = 0;
-			st->last_avg_seq = 0;
-			st->packets_since_last_avg = 0;
-		}
+		if (seq == 65535)
+			st->max_seq_since_last_avg = st->last_avg_seq = st->packets_since_last_avg = 0;
 
 		/* Make sure to count the biggest seq number we've seen in this
 		 * averaging interval to counter reordering */
@@ -2855,9 +2852,8 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Make sure that we reset the max stored sequence number if the
 		 * overflows occurs. This is double check mechanism. */
 		if (st->max_seq_since_last_avg > seq) {
-			st->max_seq_since_last_avg = seq;
-			st->last_avg_seq = 0;
-			st->packets_since_last_avg = seq;
+			st->max_seq_since_last_avg = st->packets_since_last_avg = seq;
+			st->last_avg_seq = 0;Formatting
 		}
 	}
 
