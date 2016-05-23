@@ -438,10 +438,9 @@ This endpoint does not require any additional data.
 ```
 
 #### `stop`
-
-**Request**:
 This endpoint does not require any additional data.
 
+**Request**:
 ```json
 {}
 ```
