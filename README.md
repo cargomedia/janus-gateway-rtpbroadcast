@@ -8,6 +8,24 @@ Overview
 --------
 This plugin provides extended support for `RTP` streaming.
 
+Main features:
+- allows to create multiple streams (sources) per mountpoint
+- tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
+- provides extended RTP statistics for incoming streams (bitrate, packets loss)
+- supports `key-frame` based scheduling for stream and mountpoint switching
+- support `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
+- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler`
+- allows to manually switch the stream or turn off the `auto-switch`
+- supports IP based white-listing for incoming RTP packages
+- automatically records the first provided stream (per mountpoint) into configurable archives
+- dumps stream RTP payload into configurable thumbnailer archives
+- creates job files and store events like new `archive-finished` or `thumbnailing-finished`
+- supports `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
+- implements `switch-source` end point for switching the stream in the mountpoint
+- supports capability for scaling on the `UDP` level by introducing `watch-udp` end point
+- implements `superuser` end point which upgrades/downgrades session for receiving detailed admin info
+- provides a bad connection simulator (UDP packet loss)
+
 Configuration
 -------------
 ```
