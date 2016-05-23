@@ -272,8 +272,7 @@ It returns mountpoint with specific `id`. If `id` is not provided it return all 
 
 Asychronous actions
 -------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It changes `watch` action and introduces new 
-`switch-source` action.
+It supports `start`, `stop`, `pause`, `switch`, `watch`, `watch-udp`, `switch-source` and `superuser` actions.
 
 Asynchronous action gets janus `ack` response for request and then receives `event` with plugin response.
 
@@ -402,8 +401,60 @@ By passing `true` it upgrades current session into super user session and downgr
 }
 ```
 
-#### `stop`, `start`, `pause`
-Events has the same bahaviour as native `janus/streaming` plugin.
+#### `start`
+This endpoint does not require any additional data.
+
+**Request**:
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "started|starting",
+  }
+}
+```
+
+#### `pause`
+This endpoint does not require any additional data.
+
+**Request**:
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "pausing",
+  }
+}
+```
+
+#### `stop`
+
+**Request**:
+This endpoint does not require any additional data.
+
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "stopping",
+  }
+}
+```
 
 Job files
 ---------
@@ -413,7 +464,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```json
 {
     "data": {
-        "id": "<string>",
+        "id": "<string>", 
         "uid": "<string>",
         "createdAt": "<int>",
         "video": "<archive_path/recording_pattern>.mjr",
