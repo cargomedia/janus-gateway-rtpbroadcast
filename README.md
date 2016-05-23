@@ -19,15 +19,21 @@ Configuration
 ; minport = 8000
 ; maxport = 9000
 
-; Source bitrate averaging interval, seconds
-; source_avg_time = 10
+; Source bitrate averaging interval and
+; session streams status update interval, seconds
+; mountpoint_info_interval = 10
+
 ; Watcher REMB averageing interval, seconds
-; remb_avg_time = 3
+; remb_avg_interval = 3
 ; Switching interval, seconds
 ; switching_delay = 1
 
-; Session streams status update interval, seconds
-; session_info_update_time = 10
+; UDP queuing allows to pool up packets and send them from separate threads
+; Alternative is sending the packets from the thread they are received from
+; udp_relay_queue_enabled = no
+
+; Interval at which UDP relay thread should wake up and process the queue, microseconds
+; udp_relay_interval = 50000
 
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
@@ -124,7 +130,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session
-- `packet-loss` is an estimate of UDP packets loss for the window of last `source_avg_time` seconds as regular stats
+- `packet-loss` is an estimate of UDP packets loss for the window of last `mountpoint_info_interval` seconds as regular stats
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
@@ -457,12 +463,14 @@ used for calculating statistics.
       "<stream-definition-N>",
     ],
     "config": {
-      "source_avg_duration": "<int>",
-      "remb_avg_duration": "<int>"
+      "mountpoint-info-interval": "<int>",
+      "remb-avg-interval": "<int>"
     }
   }
 }
 ```
+- `mountpoint-info-interval` is equal to `mountpoint_info_interval` of config file.
+- `remb-avg-interval` is equal to `remb_avg_interval` of config file.
 
 #### Mountpoints information event
 It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
