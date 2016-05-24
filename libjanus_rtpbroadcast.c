@@ -1601,7 +1601,6 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 
 		/* If the session is watching something, let's see if it needs switching */
 		if (sessid->source &&
-				oldremb != sessid->remb && sessid->remb != 0 &&
 					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
 
 			if (sessid->source == NULL)
