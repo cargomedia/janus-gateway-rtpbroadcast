@@ -43,8 +43,6 @@ Configuration
 ; session streams status update interval, seconds
 ; mountpoint_info_interval = 10
 
-; Watcher REMB averageing interval, seconds
-; remb_avg_interval = 3
 ; Switching interval, seconds
 ; switching_delay = 1
 

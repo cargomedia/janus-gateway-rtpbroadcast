@@ -239,7 +239,6 @@ static struct {
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
 	guint mountpoint_info_interval;
-	guint remb_avg_interval;
 	guint switching_delay;
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
@@ -446,8 +445,6 @@ typedef struct cm_rtpbcast_session {
 	/* REMB and auxillary vars for math */
 	guint64 remb;
 	guint64 last_remb_usec;
-	guint64 rembsum;
-	guint rembcount;
 	guint64 last_switch;
 	gboolean autoswitch;
 
@@ -688,7 +685,6 @@ void *cm_rtpbcast_watchdog(void *data) {
 
 						json_t *config = json_object();
 						json_object_set_new(config, "mountpoint-info-interval", json_integer(cm_rtpbcast_settings.mountpoint_info_interval));
-						json_object_set_new(config, "remb-avg-interval", json_integer(cm_rtpbcast_settings.remb_avg_interval));
 						json_object_set_new(result, "config", config);
 
 						json_object_set_new(event, "result", result);
@@ -757,7 +753,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
-	cm_rtpbcast_settings.remb_avg_interval = 3;
 	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
@@ -809,7 +804,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"thumbnailing_interval",
 				"thumbnailing_duration",
 				"mountpoint_info_interval",
-				"remb_avg_interval",
 				"switching_delay",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
@@ -821,7 +815,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.thumbnailing_interval,
 				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.mountpoint_info_interval,
-				&cm_rtpbcast_settings.remb_avg_interval,
 				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
@@ -1020,7 +1013,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->paused = FALSE;
 	session->destroyed = 0;
 	session->remb = -1;
-	session->last_remb_usec = session->rembsum = session->rembcount = 0;
+	session->last_remb_usec = 0;
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
 	session->autoswitch = TRUE;
@@ -1599,24 +1592,12 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if(bw > 0) {
 		JANUS_LOG(LOG_HUGE, "REMB for this PeerConnection: %"SCNu64"\n", bw);
 
-		/* Adding the REMB to sum */
-		sessid->rembsum += bw;
-		sessid->rembcount ++;
-		guint64 oldremb = sessid->remb;
-
 		/* If it's first measurement, start the timer */
 		guint64 ml = janus_get_monotonic_time();
-		if (!sessid->last_remb_usec) {
-			sessid->last_remb_usec = ml;
-		/* Otherwise check if we stepped out */
-		} else if (ml - sessid->last_remb_usec >= cm_rtpbcast_settings.remb_avg_interval * STAT_SECOND) {
-			/* Calculate average */
-			sessid->remb = sessid->rembcount? sessid->rembsum / sessid->rembcount : 0;
 
-			/* Reset timers */
-			sessid->rembsum = sessid->rembcount = 0;
-			sessid->last_remb_usec = ml;
-		}
+		/* Calculate average */
+		sessid->remb = bw;
+		sessid->last_remb_usec = ml;
 
 		/* If the session is watching something, let's see if it needs switching */
 		if (sessid->source &&
