@@ -239,7 +239,6 @@ static struct {
 	guint thumbnailing_interval;
 	guint thumbnailing_duration;
 	guint mountpoint_info_interval;
-	guint switching_delay;
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
 	gboolean recording_enabled;
@@ -753,7 +752,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.minport = 8000;
 	cm_rtpbcast_settings.maxport = 9000;
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
-	cm_rtpbcast_settings.switching_delay = 1;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
@@ -804,7 +802,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"thumbnailing_interval",
 				"thumbnailing_duration",
 				"mountpoint_info_interval",
-				"switching_delay",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
 				"udp_relay_interval",
@@ -815,7 +812,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.thumbnailing_interval,
 				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.mountpoint_info_interval,
-				&cm_rtpbcast_settings.switching_delay,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
 				&cm_rtpbcast_settings.udp_relay_interval,
@@ -1600,8 +1596,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		sessid->last_remb_usec = ml;
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source &&
-					ml - sessid->last_switch >= cm_rtpbcast_settings.switching_delay * STAT_SECOND ) {
+		if (sessid->source) {
 
 			if (sessid->source == NULL)
 				return;
