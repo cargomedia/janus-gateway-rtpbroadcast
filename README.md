@@ -137,7 +137,7 @@ The response for multiple actions contains the `stream-definition` like follows:
    "session": {
       "webrtc-active": "<boolean>",
       "autoswitch-enabled": "<boolean>",
-      "remb-avg": "<int|null>"
+      "remb": "<int|null>"
    }
 }
 ```
@@ -479,13 +479,11 @@ used for calculating statistics.
     ],
     "config": {
       "mountpoint-info-interval": "<int>",
-      "remb-avg-interval": "<int>"
     }
   }
 }
 ```
 - `mountpoint-info-interval` is equal to `mountpoint_info_interval` of config file.
-- `remb-avg-interval` is equal to `remb_avg_interval` of config file.
 
 #### Mountpoints information event
 It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 

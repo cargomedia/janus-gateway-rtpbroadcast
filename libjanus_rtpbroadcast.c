@@ -3473,7 +3473,7 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_t *u = json_object();
 	json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
 	json_object_set_new(u, "autoswitch-enabled", json_integer(session->autoswitch));
-	json_object_set_new(u, "remb-avg", (session->remb == -1)? json_null() : json_integer(session->remb));
+	json_object_set_new(u, "remb", (session->remb == -1)? json_null() : json_integer(session->remb));
 	json_object_set_new(v, "session", u);
 
 	return v;
