@@ -43,11 +43,6 @@ Configuration
 ; session streams status update interval, seconds
 ; mountpoint_info_interval = 10
 
-; Watcher REMB averageing interval, seconds
-; remb_avg_interval = 3
-; Switching interval, seconds
-; switching_delay = 1
-
 ; UDP queuing allows to pool up packets and send them from separate threads
 ; Alternative is sending the packets from the thread they are received from
 ; udp_relay_queue_enabled = no
@@ -142,7 +137,7 @@ The response for multiple actions contains the `stream-definition` like follows:
    "session": {
       "webrtc-active": "<boolean>",
       "autoswitch-enabled": "<boolean>",
-      "remb-avg": "<int|null>"
+      "remb": "<int|null>"
    }
 }
 ```
@@ -484,13 +479,11 @@ used for calculating statistics.
     ],
     "config": {
       "mountpoint-info-interval": "<int>",
-      "remb-avg-interval": "<int>"
     }
   }
 }
 ```
 - `mountpoint-info-interval` is equal to `mountpoint_info_interval` of config file.
-- `remb-avg-interval` is equal to `remb_avg_interval` of config file.
 
 #### Mountpoints information event
 It sends updates with current state of mountpoints to the `superuser` sessions. This is currently triggerd by `create` and `destroy` end point. 
