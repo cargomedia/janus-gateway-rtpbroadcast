@@ -6,27 +6,15 @@ janus-gateway-rtpbroadcast
 
 Overview
 --------
-This plugin is based on native `janus` streaming plugin. It drops support for `LIVE`, `RTSP`, `VOD` and extends support for `RTP` streaming.
+This plugins provides bridging layer between `RTP/UDP` publisher and `WebRTC` consumer as well as the plain `UDP` to `UDP` proxy mode.
 
-Main extensions:
-- renames plugin with `janus.plugin.cm.rtpbroadcast`
-- changes type of mountpoint `id` from `integer` to `string`
-- allows to create multiple streams (sources) per mountpoint
-- tracks `RTP/VP8` header workflow and provides `width`, `height` for frame and `fps`, `key-frame-distance` for stream
-- extends RTP statistics for incoming streams (bitrate, packets loss)
-- introduces `key-frame` based scheduling for stream and mountpoint switching
-- introduces `auto-switch` of active stream based on client bandwidth (`WebRTC/REMB`)
-- pushes new media event to the subscriber if stream or mountpoint switched by `scheduler`
-- allows to manually switch the stream or turn off the `auto-switch`
-- introduce IP based white-listing for incoming RTP packages
-- automatically records the first provided stream (per mountpoint) into configurable archives
-- dumps stream RTP payload into configurable thumbnailer archives
-- creates job files and store events like new `archive-finished` or `thumbnailing-finished`
-- introduces `UDP` relay gateway and allows to switch session between `WebRTC` and `UDP` relay mode
-- introduces `switch-source` end point for switching the stream in the mountpoint
-- introduces capability for scaling on the `UDP` level by introducing `watch-udp` end point
-- introduces `superuser` end point which upgrades/downgrades session for receiving detailed admin info
-- introduces bad connection simulator (UDP packet loss) 
+Main features:
+- 1-to-many and RTP-to-WebRTC streaming
+- 1-to-many and UDP-to-UDP proxy
+- Multiple streams per mountpoint with different qualities/resolutions
+- Manual or auto-switching of `RTP` streams per `WebRTC` client
+- Recording of streams
+- Thumbnails of streams
 
 Configuration
 -------------
@@ -269,8 +257,7 @@ It returns mountpoint with specific `id`. If `id` is not provided it return all 
 
 Asychronous actions
 -------------------
-It supports `start`, `stop`, `pause`, `switch` actions like native `janus/streaming` plugins. It changes `watch` action and introduces new 
-`switch-source` action.
+It supports `start`, `stop`, `pause`, `switch`, `watch`, `watch-udp`, `switch-source` and `superuser` actions.
 
 Asynchronous action gets janus `ack` response for request and then receives `event` with plugin response.
 
@@ -399,8 +386,59 @@ By passing `true` it upgrades current session into super user session and downgr
 }
 ```
 
-#### `stop`, `start`, `pause`
-Events has the same bahaviour as native `janus/streaming` plugin.
+#### `start`
+This endpoint does not require any additional data.
+
+**Request**:
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "started|starting",
+  }
+}
+```
+
+#### `pause`
+This endpoint does not require any additional data.
+
+**Request**:
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "pausing",
+  }
+}
+```
+
+#### `stop`
+This endpoint does not require any additional data.
+
+**Request**:
+```json
+{}
+```
+
+**Event**:
+```json
+{
+  "streaming": "event",
+  "result": {
+    "status": "stopping",
+  }
+}
+```
 
 Job files
 ---------
@@ -410,7 +448,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```json
 {
     "data": {
-        "id": "<string>",
+        "id": "<string>", 
         "uid": "<string>",
         "createdAt": "<int>",
         "video": "<archive_path/recording_pattern>.mjr",
@@ -535,3 +573,7 @@ to generate the `configure` script.
 make
 make install
 ```
+
+Packages
+--------
+Please find [DEB packages](https://github.com/cargomedia/debian-packages) for this plugin.
