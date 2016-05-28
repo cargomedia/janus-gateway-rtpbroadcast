@@ -2886,16 +2886,22 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		 no such source found */
 	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
 	for (i = 0; i < sources->len; i++) {
-		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
+		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
 		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
-		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
+		if ((source_bw < remb) && !best_bw) {
 			best_src = src;
 			best_bw = source_bw;
 		}
 	}
+
+ if (best_src == NULL) {
+		if (sources != NULL) {
+			best_src = g_array_index(sources, cm_rtpbcast_rtp_source *, (sources->len-1));
+		}
+  }
 
 	return best_src;
 }
