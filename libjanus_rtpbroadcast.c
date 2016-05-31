@@ -2878,10 +2878,6 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	if (sources->len <= 0)
 		return NULL;
 
-	/* If we don't know the remb yet, return highest quality stream */
-	if (remb == 0)
-		return g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
-
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 		 no such source found */
 	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
