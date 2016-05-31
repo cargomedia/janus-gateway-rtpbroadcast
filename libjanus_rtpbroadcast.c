@@ -1580,9 +1580,6 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if (sessid->stopping || sessid->paused)
 		return;
 
-	if (!sessid->autoswitch)
-		return;
-
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
@@ -1596,7 +1593,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		sessid->last_remb_usec = ml;
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source) {
+		if (sessid->source && sessid->autoswitch) {
 
 			if (sessid->source == NULL)
 				return;
@@ -2864,28 +2861,38 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 	janus_mutex_unlock(&st->stat_mutex);
 }
 
+gint cm_rtpbcast_rtp_source_video_bitrate_sort_function (gconstpointer a, gconstpointer b) {
+    cm_rtpbcast_rtp_source * source_a = (cm_rtpbcast_rtp_source *) a;
+    cm_rtpbcast_rtp_source * source_b = (cm_rtpbcast_rtp_source *) b;
+
+    return (gint)source_b->stats[VIDEO].cur - (gint)source_a->stats[VIDEO].cur;
+}
+
 cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	/* If no sources, oh well */
 	if (sources->len <= 0)
 		return NULL;
 
-	/* If we don't know the remb yet, return highest quality stream */
-	if (remb == 0)
-		return g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
+	GArray *source_dup =  g_array_ref(sources);
+	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
 
 	/* Pick the source with bitrate less than REMB given or the worst quality if
 		 no such source found */
 	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
-	for (i = 0; i < sources->len; i++) {
-		src = g_array_index(sources, cm_rtpbcast_rtp_source *, i++);
+	for (i = 0; i < source_dup->len; i++) {
+		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
 		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
-		if (!best_bw || (best_bw < source_bw && source_bw < remb )) {
+		if ((source_bw < remb) && !best_bw) {
 			best_src = src;
 			best_bw = source_bw;
 		}
+	}
+
+	if (best_src == NULL) {
+		best_src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, (source_dup->len-1));
 	}
 
 	return best_src;
