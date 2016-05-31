@@ -1580,9 +1580,6 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 	if (sessid->stopping || sessid->paused)
 		return;
 
-	if (!sessid->autoswitch)
-		return;
-
 	/* We might interested in the available bandwidth that the user advertizes */
 	uint64_t bw = janus_rtcp_get_remb(buf, len);
 	if(bw > 0) {
@@ -1596,7 +1593,7 @@ void cm_rtpbcast_incoming_rtcp(janus_plugin_session *handle, int video, char *bu
 		sessid->last_remb_usec = ml;
 
 		/* If the session is watching something, let's see if it needs switching */
-		if (sessid->source) {
+		if (sessid->source && sessid->autoswitch) {
 
 			if (sessid->source == NULL)
 				return;
