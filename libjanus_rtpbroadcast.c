@@ -258,8 +258,8 @@ typedef struct cm_rtpbcast_stats {
 	gdouble cur;
 
 	/* FIXME do we need minmax here? */
-	gdouble average_loss;
-	gdouble current_loss;
+	gdouble packet_loss_rate;
+	guint64 packet_loss_count;
 
 	guint64 start_usec;
 	guint64 last_avg_usec;
@@ -2785,8 +2785,8 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 	st->last_avg_usec = ml;
 
 	st->cur = -1.0;
-	st->average_loss = -1.0;
-	st->current_loss = -1.0;
+	st->packet_loss_rate = -1.0;
+	st->packet_loss_count = -1.0;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -2849,25 +2849,16 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		if (isvideo != -1) {
 			guint32 den = st->max_seq_since_last_avg - st->last_avg_seq;
 			if (den != 0 && st->packets_since_last_avg < den)
-				st->current_loss = 1.0 - (gdouble)st->packets_since_last_avg / (gdouble) den;
+				st->packet_loss_rate = 1.0 - (gdouble)st->packets_since_last_avg / (gdouble) den;
 			else
-				st->current_loss = 0.0;
+				st->packet_loss_rate = 0.0;
+
+			st->packet_loss_count += den;
 			st->packets_since_last_avg = 0;
 			st->last_avg_seq = st->max_seq_since_last_avg;
 		} else {
-			st->current_loss = -1.0;
+			st->packet_loss_rate = -1.0;
 		}
-	}
-
-	/* Re-calculate average regardless */
-	if (isvideo != -1) {
-		guint32 den = st->max_seq_since_last_avg - st->start_seq + 1;
-		if (den != 0 && st->packets_since_start < den)
-			st->average_loss = 1.0 - (gdouble)st->packets_since_start / (gdouble) den;
-		else
-			st->average_loss = 0.0;
-		/* If debug is enabled, output CSV for stat collection */
-		JANUS_LOG(LOG_DBG, "%d, %s, %.6f, %.6f\n", janus_get_monotonic_time(), av_names[isvideo], st->current_loss, st->average_loss);
 	}
 
 	janus_mutex_unlock(&st->stat_mutex);
@@ -3430,7 +3421,9 @@ json_t *cm_rtpbcast_source_stats_to_json(cm_rtpbcast_rtp_source *src) {
 
 		janus_mutex_lock(&src->stats[j].stat_mutex);
 		json_object_set_new(v, "bitrate", (src->stats[j].cur == -1) ? json_null() : json_real(src->stats[j].cur));
-		json_object_set_new(v, "packet-loss", (src->stats[j].current_loss == -1) ? json_null() : json_real(src->stats[j].current_loss));
+		json_object_set_new(v, "packet-loss", (src->stats[j].packet_loss_rate == -1) ? json_null() : json_real(src->stats[j].packet_loss_rate));
+		json_object_set_new(v, "packet-loss-rate", (src->stats[j].packet_loss_rate == -1) ? json_null() : json_real(src->stats[j].packet_loss_rate));
+		json_object_set_new(v, "packet-loss-count", (src->stats[j].packet_loss_count == -1) ? json_null() : json_integer(src->stats[j].packet_loss_count));
 		janus_mutex_unlock(&src->stats[j].stat_mutex);
 
 		json_object_set_new(s, lnames[j], v);

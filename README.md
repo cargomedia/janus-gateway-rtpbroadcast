@@ -109,11 +109,13 @@ The response for multiple actions contains the `stream-definition` like follows:
    "stats": {
       "audio": {
           "bitrate": "<int|null>",
-          "packet-loss": "<float|null>"
+          "packet-loss-rate": "<float|null>",
+          "packet-loss-count": "<int|null>"
       },
       "video": {
           "bitrate": "<int|null>",
-          "packet-loss": "<float|null>"
+          "packet-loss-rate": "<float|null>",
+          "packet-loss-count": "<int|null>"
       }
    },
    "frame": {
@@ -133,7 +135,8 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `id` is the mountpoint identification
 - `index` is position of stream in the mountpoint/streams array
 - `session` is set only for `list` action and reference to current connection/session
-- `packet-loss` is an estimate of UDP packets loss for the window of last `mountpoint_info_interval` seconds as regular stats
+- `packet-loss-rate` is an estimated rate of UDP packet loss for the window of last `mountpoint_info_interval` seconds as regular stats
+- `packet-loss-count` is a count of UDP packets lost for a lifetime of the stream
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
