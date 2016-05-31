@@ -109,12 +109,11 @@ The response for multiple actions contains the `stream-definition` like follows:
    "stats": {
       "audio": {
           "bitrate": "<int|null>",
-          "packet-loss": "<float|null>",
+          "packet-loss-rate": "<float|null>",
           "packet-loss-count": "<int|null>"
       },
       "video": {
           "bitrate": "<int|null>",
-          "packet-loss": "<float|null>",
           "packet-loss-rate": "<float|null>",
           "packet-loss-count": "<int|null>"
       }
