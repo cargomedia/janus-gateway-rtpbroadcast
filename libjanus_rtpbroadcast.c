@@ -2898,9 +2898,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	}
 
 	if (best_src == NULL) {
-		if (sources != NULL) {
-			best_src = g_array_index(sources, cm_rtpbcast_rtp_source *, (sources->len-1));
-		}
+		best_src = g_array_index(sources, cm_rtpbcast_rtp_source *, (sources->len-1));
 	}
 
 	return best_src;
