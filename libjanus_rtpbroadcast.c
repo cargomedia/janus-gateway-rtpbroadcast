@@ -2850,7 +2850,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 			else
 				st->packet_loss_rate = 0.0;
 
-			st->packet_loss_count += den;
+			st->packet_loss_count += (den - st->packets_since_last_avg);
 			st->packets_since_last_avg = 0;
 			st->last_avg_seq = st->max_seq_since_last_avg;
 		} else {
