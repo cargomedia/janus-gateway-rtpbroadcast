@@ -41,6 +41,10 @@ Configuration
 ; Log error if keyframe is not found within this amount of frames
 ; keyframe_distance_alert = 600
 
+; Auto-switch adjusts the video/audio stream quality. It is based on the REMB
+; provided by the client and the current bitrate of incoming stream.
+; autoswitch = no
+
 ; NOTE: all paths should exist beforehead
 
 ; Path for job JSONs
