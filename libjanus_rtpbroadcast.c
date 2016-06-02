@@ -245,6 +245,7 @@ static struct {
 	gboolean simulate_bad_connection;
  	guint packet_loss_rate;
 	gboolean udp_relay_queue_enabled;
+	gboolean autoswitch;
 } cm_rtpbcast_settings;
 
 typedef struct cm_rtpbcast_codecs {
@@ -765,6 +766,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.simulate_bad_connection = FALSE;
 	cm_rtpbcast_settings.packet_loss_rate = 0;
 	cm_rtpbcast_settings.udp_relay_queue_enabled = FALSE;
+	cm_rtpbcast_settings.autoswitch = FALSE;
 
 	mountpoints = g_hash_table_new_full(
 		g_str_hash,	 /* Hashing func */
@@ -780,11 +782,13 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"recording_enabled",
 				"simulate_bad_connection",
 				"udp_relay_queue_enabled",
+				"autoswitch",
 			};
 			gboolean *ivars [] = {
 				&cm_rtpbcast_settings.recording_enabled,
 				&cm_rtpbcast_settings.simulate_bad_connection,
 				&cm_rtpbcast_settings.udp_relay_queue_enabled,
+				&cm_rtpbcast_settings.autoswitch,
 			};
 
 			_foreach(i, ivars) {
@@ -1012,7 +1016,7 @@ void cm_rtpbcast_create_session(janus_plugin_session *handle, int *error) {
 	session->last_remb_usec = 0;
 	session->last_switch = janus_get_monotonic_time();
 	session->mps = NULL;
-	session->autoswitch = TRUE;
+	session->autoswitch = cm_rtpbcast_settings.autoswitch;
 	session->relay_udp_gateways = NULL;
 	session->super_user = FALSE;
 	janus_mutex_init(&session->mutex);
@@ -1992,7 +1996,7 @@ static void *cm_rtpbcast_handler(void *data) {
 
 				session->autoswitch = FALSE;
 			} else {
-				session->autoswitch = TRUE;
+				session->autoswitch = cm_rtpbcast_settings.autoswitch;
 			}
 			/* Done */
 			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
@@ -2876,23 +2880,27 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	GArray *source_dup =  g_array_ref(sources);
 	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
 
-	/* Pick the source with bitrate less than REMB given or the worst quality if
-		 no such source found */
-	guint i; cm_rtpbcast_rtp_source *src, *best_src = NULL; guint64 best_bw = 0, source_bw;
-	for (i = 0; i < source_dup->len; i++) {
-		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
-		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
-		source_bw = (guint64)src->stats[VIDEO].cur;
-		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
+	cm_rtpbcast_rtp_source *best_src = NULL;
+	if (cm_rtpbcast_settings.autoswitch) {
+		/* Pick the source with bitrate less than REMB given or the worst quality if
+			 no such source found */
+		guint i; cm_rtpbcast_rtp_source *src; guint64 best_bw = 0, source_bw;
+		for (i = 0; i < source_dup->len; i++) {
+			src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
+			janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
+			source_bw = (guint64)src->stats[VIDEO].cur;
+			janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
-		if ((source_bw < remb) && !best_bw) {
-			best_src = src;
-			best_bw = source_bw;
+			if ((source_bw < remb) && !best_bw) {
+				best_src = src;
+				best_bw = source_bw;
+			}
 		}
 	}
 
 	if (best_src == NULL) {
-		best_src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, (source_dup->len-1));
+		/* Take the highest bitrate stream */
+		best_src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, 0);
 	}
 
 	return best_src;
