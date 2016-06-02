@@ -2845,12 +2845,13 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 		/* Estimate packet loss */
 		if (isvideo != -1) {
 			guint32 den = st->max_seq_since_last_avg - st->last_avg_seq;
-			if (den != 0 && st->packets_since_last_avg < den)
+			if (den != 0 && st->packets_since_last_avg < den) {
 				st->packet_loss_rate = 1.0 - (gdouble)st->packets_since_last_avg / (gdouble) den;
-			else
+				st->packet_loss_count += (den - st->packets_since_last_avg);
+			} else {
 				st->packet_loss_rate = 0.0;
+			}
 
-			st->packet_loss_count += (den - st->packets_since_last_avg);
 			st->packets_since_last_avg = 0;
 			st->last_avg_seq = st->max_seq_since_last_avg;
 		} else {
