@@ -2878,16 +2878,16 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	if (sources->len <= 0)
 		return NULL;
 
-	GArray *source_dup =  g_array_ref(sources);
+	GArray *sources_dup =  g_array_ref(sources);
 	cm_rtpbcast_rtp_source *best_src = NULL;
 	gboolean is_stream_stats_available = TRUE;
 	/* Let's sort streams descending by current bitrate.
 		If current bitrate is 0 or NULL then the order is random */
-	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
+	g_array_sort(sources_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
 
 	guint i; cm_rtpbcast_rtp_source *src; guint64 source_bw;
-	for (i = 0; i < source_dup->len; i++) {
-		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
+	for (i = 0; i < sources_dup->len; i++) {
+		src = g_array_index(sources_dup, cm_rtpbcast_rtp_source *, i);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
 		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
@@ -2917,10 +2917,10 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	}
 
 	/* If current stream bitrate is available but not matched against the REMB (maybe is 0 or lower than the lowest stream bitrate)
-	then pick up the first stream (highest bitrate) from the sorted list */
+	then pick up the last stream (lowest bitrate) from the sorted list */
 	if (best_src == NULL) {
 		/* Take the highest bitrate stream */
-		best_src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, 0);
+		best_src = g_array_index(sources_dup, cm_rtpbcast_rtp_source *, (sources->len-1));
 	}
 
 	return best_src;
