@@ -2880,30 +2880,51 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 
 	GArray *source_dup =  g_array_ref(sources);
 	cm_rtpbcast_rtp_source *best_src = NULL;
+	gboolean is_stream_stats_available = TRUE;
+	/* Let's sort streams descending by current bitrate.
+		If current bitrate is 0 or NULL then the order is random */
+	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
+	/* Pick the source with bitrate less than REMB given or the worst quality if
+		 no such source found */
+	guint i; cm_rtpbcast_rtp_source *src; guint64 best_bw = 0, source_bw;
+	for (i = 0; i < source_dup->len; i++) {
+		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
+		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
+		source_bw = (guint64)src->stats[VIDEO].cur;
+		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
-	if (cm_rtpbcast_settings.autoswitch) {
-		/* Let's sort streams descending by current bitrate.
-			If current bitrate is 0 or NULL then the order is random */
-		g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
-		/* Pick the source with bitrate less than REMB given or the worst quality if
-			 no such source found */
-		guint i; cm_rtpbcast_rtp_source *src; guint64 best_bw = 0, source_bw;
-		for (i = 0; i < source_dup->len; i++) {
-			src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
-			janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
-			source_bw = (guint64)src->stats[VIDEO].cur;
-			janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
+		/* If current bitrate for any stream is not calculated, let's reset current lookup state */
+		if (source_bw <= 0) {
+			is_stream_stats_available = FALSE;
+			best_src = NULL;
+			best_bw = 0;
+		}
 
-			if ((source_bw < remb) && !best_bw && source_bw > 0) {
+		if (!best_bw && is_stream_stats_available) {
+			/* If auto-switching is enabled */
+			if(cm_rtpbcast_settings.autoswitch) {
+				/* If current bitrate is available then pick up the stream with bitrate lower than REMB */
+				if (source_bw < remb) {
+					best_src = src;
+					best_bw = source_bw;
+				}
+			} else { /* If auto-switching is disabled, let's take the first found stream */
 				best_src = src;
 				best_bw = source_bw;
 			}
 		}
 	}
 
+	/* If current stream bitrate is not available then pick up the first stream from original order */
+	if (!is_stream_stats_available) {
+		best_src = g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
+	}
+
+	/* If current stream bitrate is available but not matched against the REMB (maybe is 0 or lower than the lowest stream bitrate)
+	then pick up the first stream (highest bitrate) from the sorted list */
 	if (best_src == NULL) {
 		/* Take the highest bitrate stream */
-		best_src = g_array_index(sources, cm_rtpbcast_rtp_source *, 0);
+		best_src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, 0);
 	}
 
 	return best_src;
