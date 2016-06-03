@@ -2884,8 +2884,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 	/* Let's sort streams descending by current bitrate.
 		If current bitrate is 0 or NULL then the order is random */
 	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
-	/* Pick the source with bitrate less than REMB given or the worst quality if
-		 no such source found */
+
 	guint i; cm_rtpbcast_rtp_source *src; guint64 best_bw = 0, source_bw;
 	for (i = 0; i < source_dup->len; i++) {
 		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
