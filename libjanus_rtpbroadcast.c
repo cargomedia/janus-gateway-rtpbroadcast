@@ -2885,7 +2885,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		If current bitrate is 0 or NULL then the order is random */
 	g_array_sort(source_dup, cm_rtpbcast_rtp_source_video_bitrate_sort_function);
 
-	guint i; cm_rtpbcast_rtp_source *src; guint64 best_bw = 0, source_bw;
+	guint i; cm_rtpbcast_rtp_source *src; guint64 source_bw;
 	for (i = 0; i < source_dup->len; i++) {
 		src = g_array_index(source_dup, cm_rtpbcast_rtp_source *, i);
 		janus_mutex_lock(&src->stats[VIDEO].stat_mutex);
@@ -2898,17 +2898,15 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 			best_src = NULL;
 		}
 
-		if (!best_bw && is_stream_stats_available) {
+		if (best_src == NULL && is_stream_stats_available) {
 			/* If auto-switching is enabled */
 			if(cm_rtpbcast_settings.autoswitch) {
 				/* If current bitrate is available then pick up the stream with bitrate lower than REMB */
 				if (source_bw < remb) {
 					best_src = src;
-					best_bw = source_bw;
 				}
 			} else { /* If auto-switching is disabled, let's take the first found stream */
 				best_src = src;
-				best_bw = source_bw;
 			}
 		}
 	}
