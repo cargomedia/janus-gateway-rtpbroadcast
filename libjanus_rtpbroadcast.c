@@ -2896,6 +2896,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		if (source_bw <= 0) {
 			is_stream_stats_available = FALSE;
 			best_src = NULL;
+			break;
 		}
 
 		if (best_src == NULL && is_stream_stats_available) {
