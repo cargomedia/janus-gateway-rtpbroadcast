@@ -2892,8 +2892,8 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		source_bw = (guint64)src->stats[VIDEO].cur;
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
-		/* If current bitrate for any stream is not calculated, let's reset current lookup state */
-		if (source_bw <= 0) {
+		/* If current bitrate for any stream is not calculated (-1, null), let's reset current lookup state */
+		if (source_bw == -1 || source_bw == NULL) {
 			is_stream_stats_available = FALSE;
 			best_src = NULL;
 			break;
