@@ -2923,6 +2923,8 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		best_src = g_array_index(sources_dup, cm_rtpbcast_rtp_source *, (sources->len-1));
 	}
 
+	g_array_unref(sources_dup);
+
 	return best_src;
 }
 
