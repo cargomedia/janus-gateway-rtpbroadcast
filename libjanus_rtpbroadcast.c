@@ -3374,11 +3374,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	json_object_set_new(result, "event", json_string("changed"));
 
-	json_t *currentsrc = cm_rtpbcast_source_to_json(source, sessid);
-	json_t *previoussrc = cm_rtpbcast_source_to_json(oldsrc, sessid);
-
-	json_object_set_new(result, "current", currentsrc);
-	json_object_set_new(result, "previous", previoussrc);
+	json_t *st = cm_rtpbcast_sources_to_json(source->mp->sources, sessid);
+	json_object_set_new(result, "streams", st);
 
 	json_object_set_new(event, "result", result);
 	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
