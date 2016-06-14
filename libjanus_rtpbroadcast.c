@@ -1995,8 +1995,8 @@ static void *cm_rtpbcast_handler(void *data) {
 				session->autoswitch = cm_rtpbcast_settings.autoswitch;
 			}
 			/* Done */
-			json_t *sources = cm_rtpbcast_sources_to_json(session->source->mp->sources, session);
-			json_object_set_new(result, "streams", sources);
+			json_t *streams = cm_rtpbcast_sources_to_json(session->source->mp->sources, session);
+			json_object_set_new(result, "streams", streams);
 		} else if(!strcasecmp(request_text, "switch")) {
 			/* This listener wants to switch to a different mountpoint
 			 * NOTE: this only works for live RTP streams as of now: you
@@ -3374,8 +3374,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 
 	json_object_set_new(result, "event", json_string("changed"));
 
-	json_t *st = cm_rtpbcast_sources_to_json(source->mp->sources, sessid);
-	json_object_set_new(result, "streams", st);
+	json_t *streams = cm_rtpbcast_sources_to_json(source->mp->sources, sessid);
+	json_object_set_new(result, "streams", streams);
 
 	json_object_set_new(event, "result", result);
 	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
