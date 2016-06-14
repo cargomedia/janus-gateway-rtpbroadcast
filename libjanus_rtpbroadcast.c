@@ -1990,18 +1990,13 @@ static void *cm_rtpbcast_handler(void *data) {
 			if(index_value) {
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
 				cm_rtpbcast_schedule_switch(session, newsrc);
-
-				json_t *nextsrc = cm_rtpbcast_source_to_json(newsrc, session);
-				json_object_set_new(result, "next", nextsrc);
-
 				session->autoswitch = FALSE;
 			} else {
 				session->autoswitch = cm_rtpbcast_settings.autoswitch;
 			}
 			/* Done */
-			json_t *currentsrc = cm_rtpbcast_source_to_json(session->source, session);
-			json_object_set_new(result, "current", currentsrc);
-			json_object_set_new(result, "autoswitch", json_integer(session->autoswitch));
+			json_t *sources = cm_rtpbcast_sources_to_json(session->source->mp->sources, session);
+			json_object_set_new(result, "streams", sources);
 		} else if(!strcasecmp(request_text, "switch")) {
 			/* This listener wants to switch to a different mountpoint
 			 * NOTE: this only works for live RTP streams as of now: you
@@ -3501,7 +3496,17 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "frame", f);
 
 	json_t *u = json_object();
-	json_object_set_new(u, "webrtc-active", json_integer(session->source == src));
+
+	json_t *webrtc_status = NULL;
+	if (session->source == src) {
+		webrtc_status  = json_string("active");
+	} else if (session->nextsource == src) {
+		webrtc_status  = json_string("next");
+	} else {
+		webrtc_status  = json_null();
+	}
+
+	json_object_set_new(u, "webrtc-status", webrtc_status);
 	json_object_set_new(u, "autoswitch-enabled", json_integer(session->autoswitch));
 	json_object_set_new(u, "remb", (session->remb == -1)? json_null() : json_integer(session->remb));
 	json_object_set_new(v, "session", u);
