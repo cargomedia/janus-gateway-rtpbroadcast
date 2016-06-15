@@ -129,7 +129,7 @@ The response for multiple actions contains the `stream-definition` like follows:
       "key-distance": "<int>"
    },
    "session": {
-      "webrtc-active": "<boolean>",
+      "webrtc-status": "<string|null>",
       "autoswitch-enabled": "<boolean>",
       "remb": "<int|null>"
    }
@@ -141,6 +141,7 @@ The response for multiple actions contains the `stream-definition` like follows:
 - `session` is set only for `list` action and reference to current connection/session
 - `packet-loss-rate` is an estimated rate of UDP packet loss for the window of last `mountpoint_info_interval` seconds as regular stats
 - `packet-loss-count` is a count of UDP packets lost for a lifetime of the stream
+- `webrtc-status` if defined can be "active" or "next"
 
 #### Mountpoint definition for responses
 The response for multiple actions contains the `mountpoint-definition` like follows:
@@ -366,14 +367,15 @@ If `index` is equal to `0` then `auto-switch` support will be `ON`.
 {
   "streaming": "event",
   "result": {
-    "next": "null|<stream-definition>",
-    "current": "<stream-definition>",
-    "autoswitch": "<boolean>"
+    "streams": [
+      "<stream-definition-1>",
+      "<stream-definition-2>",
+      "<stream-definition-N>",
+    ],
   }
 }
 ```
 
-`next` source definition is not available if `autoswitch` is set to `true`.
 
 #### `superuser`
 By passing `true` it upgrades current session into super user session and downgrade into regular one by passing `false`.
@@ -503,8 +505,11 @@ If scheduled task is executed the subscriber receives media event:
   "streaming": "event",
   "result": {
     "event": "changed",
-    "current": "<stream-definition>",
-    "previous": "<stream-definition>"
+    "streams": [
+      "<stream-definition-1>",
+      "<stream-definition-2>",
+      "<stream-definition-N>",
+    ],
   }
 }
 ```
