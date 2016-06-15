@@ -2818,7 +2818,7 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 
 		/* Reset max sequence number stored on overflow */
 		if (seq == 65535)
-			st->max_seq_since_last_avg = st->last_avg_seq = st->packets_since_last_avg = 0;
+			st->max_seq_since_last_avg = st->last_avg_seq = st->packets_since_last_avg = seq = 0;
 
 		/* Make sure to count the biggest seq number we've seen in this
 		 * averaging interval to counter reordering */
