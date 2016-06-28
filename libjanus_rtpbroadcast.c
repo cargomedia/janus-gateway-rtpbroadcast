@@ -2608,8 +2608,19 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							janus_recorder_save_frame(mountpoint->trc[0]->r, buffer, bytes);
 
 						/* Is it time to stop the thumbnailing? */
-						if (mountpoint->trc[0]->r && (ml > mountpoint->last_thumbnail
-							+ cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
+						if (mountpoint->trc[0]->r && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
+							/* Packets density since last source/stats average */
+							guint32 den = source->stats[j].max_seq_since_last_avg - source->stats[j].last_avg_seq;
+							/* If any packet received, let's check if all packets arrived based on sequence number */
+							if (den != 0 && source->stats[j].packets_since_last_avg < den) {
+								/* If any packet has been lost then let's assume the keyframe is corrupted */
+								if((den - source->stats[j].packets_since_last_avg) > 0) {
+									/* This is assumption that keyframe is cirrupted if any packet has been lost during recording */
+									mountpoint->trc[0]->had_keyframe = FALSE;
+									/* Force the restart of thumbnailing record */
+									mountpoint->last_thumbnail = 0;
+								}
+							}
 							cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
 						}
 					}
