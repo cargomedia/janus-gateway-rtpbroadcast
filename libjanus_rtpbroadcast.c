@@ -2615,9 +2615,9 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							if (den != 0 && source->stats[j].packets_since_last_avg < den) {
 								/* If any packet has been lost then let's assume the keyframe is corrupted */
 								if((den - source->stats[j].packets_since_last_avg) > 0) {
-									/* This is assumption that keyframe is cirrupted if any packet has been lost during recording */
+									/* Mark the keyframe for current thumbnail record as corrupted */
 									mountpoint->trc[0]->had_keyframe = FALSE;
-									/* Force the restart of thumbnailing record */
+									/* Force the restart of thumbnail record */
 									mountpoint->last_thumbnail = 0;
 								}
 							}
