@@ -362,7 +362,7 @@ typedef struct cm_rtpbcast_rtp_source {
 } cm_rtpbcast_rtp_source;
 
 #define CM_RTPBCAST_VP8		0
-#define CM_RTPBCAST_H264	1
+#define CM_RTPBCAST_H264		1
 #define CM_RTPBCAST_VP9		2
 
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
