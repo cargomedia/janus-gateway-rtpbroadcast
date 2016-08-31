@@ -253,7 +253,7 @@ typedef struct cm_rtpbcast_codecs {
 	gint pt[AV];
 	char *rtpmap[AV];
 	char *fmtp[AV];
-	gint video_codec;
+	gint codec[AV];
 } cm_rtpbcast_codecs;
 
 #define STAT_SECOND 1000000
@@ -361,9 +361,9 @@ typedef struct cm_rtpbcast_rtp_source {
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
 
-#define JANUS_STREAMING_VP8		0
-#define JANUS_STREAMING_H264	1
-#define JANUS_STREAMING_VP9		2
+#define CM_RTPBCAST_VP8		0
+#define CM_RTPBCAST_H264	1
+#define CM_RTPBCAST_VP9		2
 
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
 static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
@@ -494,6 +494,7 @@ typedef struct cm_rtpbcast_rtp_relay_packet {
 	rtp_header *data;
 	gint length;
 	gint is_video;
+	gint is_keyframe;
 	guint source_index;
 	uint32_t timestamp;
 	uint16_t seq_number;
@@ -2326,6 +2327,16 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 			live_rtp_source->codecs.rtpmap[j] = req.rtpmap[j] ? g_strdup(req.rtpmap[j]) : NULL;
 			live_rtp_source->codecs.fmtp[j] = req.fmtp[j] ? g_strdup(req.fmtp[j]) : NULL;
 
+			live_rtp_source->codecs.codec[j] = -1;
+			if(j == VIDEO) {
+				if(strstr(req.rtpmap[j], "vp8") || strstr(req.rtpmap[j], "VP8"))
+					live_rtp_source->codecs.codec[j] = CM_RTPBCAST_VP8;
+				else if(strstr(req.rtpmap[j], "vp9") || strstr(req.rtpmap[j], "VP9"))
+					live_rtp_source->codecs.codec[j] = CM_RTPBCAST_VP9;
+				else if(strstr(req.rtpmap[j], "h264") || strstr(req.rtpmap[j], "H264"))
+					live_rtp_source->codecs.codec[j] = CM_RTPBCAST_H264;
+			}
+
 			/* Checking the next valid port */
 			/* TODO @landswellsong: hash table only remembers the source, do we need it
 							to remember whether it was video or audio too? */
@@ -2528,6 +2539,63 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 				is_video_keyframe = FALSE;
 				if (j == VIDEO) {
+
+					if(source->keyframe.temp_ts > 0 && ntohl(rtp->timestamp) != source->keyframe.temp_ts) {
+						/* We received the last part of the keyframe, get rid of the old one and use this from now on */
+						JANUS_LOG(LOG_HUGE, "[%s] ... ... last part of keyframe received! ts=%"SCNu32", %d packets\n",
+							mountpoint->name, source->keyframe.temp_ts, g_list_length(source->keyframe.temp_keyframe));
+						source->keyframe.temp_ts = 0;
+						janus_mutex_lock(&source->keyframe.mutex);
+						GList *temp = NULL;
+						while(source->keyframe.latest_keyframe) {
+							temp = g_list_first(source->keyframe.latest_keyframe);
+							source->keyframe.latest_keyframe = g_list_remove_link(source->keyframe.latest_keyframe, temp);
+							cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+							g_free(pkt->data);
+							g_free(pkt);
+							g_list_free(temp);
+						}
+						source->keyframe.latest_keyframe = source->keyframe.temp_keyframe;
+						source->keyframe.temp_keyframe = NULL;
+						janus_mutex_unlock(&source->keyframe.mutex);
+					} else if(ntohl(rtp->timestamp) == source->keyframe.temp_ts) {
+						/* Part of the keyframe we're currently saving, store */
+						janus_mutex_lock(&source->keyframe.mutex);
+						JANUS_LOG(LOG_HUGE, "[%s] ... other part of keyframe received! ts=%"SCNu32"\n", mountpoint->name, source->keyframe.temp_ts);
+						cm_rtpbcast_rtp_relay_packet *pkt = g_malloc0(sizeof(cm_rtpbcast_rtp_relay_packet));
+						pkt->data = g_malloc0(bytes);
+						memcpy(pkt->data, buffer, bytes);
+						pkt->data->ssrc = htons(1);
+						pkt->data->type = source->codecs.pt[VIDEO];
+						pkt->is_video = 1;
+						pkt->is_keyframe = 1;
+						pkt->length = bytes;
+						pkt->timestamp = source->keyframe.temp_ts;
+						pkt->seq_number = ntohs(rtp->seq_number);
+						source->keyframe.temp_keyframe = g_list_append(source->keyframe.temp_keyframe, pkt);
+						janus_mutex_unlock(&source->keyframe.mutex);
+					} else if(cm_rtpbcast_is_keyframe(source->codecs.codec[VIDEO], buffer, bytes)) {
+						/* New keyframe, start saving it */
+						source->keyframe.temp_ts = ntohl(rtp->timestamp);
+						JANUS_LOG(LOG_HUGE, "[%s] New keyframe received! ts=%"SCNu32"\n", mountpoint->name, source->keyframe.temp_ts);
+						janus_mutex_lock(&source->keyframe.mutex);
+						cm_rtpbcast_rtp_relay_packet *pkt = g_malloc0(sizeof(cm_rtpbcast_rtp_relay_packet));
+						pkt->data = g_malloc0(bytes);
+						memcpy(pkt->data, buffer, bytes);
+						pkt->data->ssrc = htons(1);
+						pkt->data->type = source->codecs.pt[VIDEO];
+						pkt->is_video = 1;
+						pkt->is_keyframe = 1;
+						pkt->length = bytes;
+						pkt->timestamp = source->keyframe.temp_ts;
+						pkt->seq_number = ntohs(rtp->seq_number);
+						source->keyframe.temp_keyframe = g_list_append(source->keyframe.temp_keyframe, pkt);
+						janus_mutex_unlock(&source->keyframe.mutex);
+					}
+
+
+
+
 					/* CC count */
 					guint8 cc = buffer[0] & 0x0F;
 
@@ -2608,6 +2676,11 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							}
 						}
 					}
+
+
+
+
+
 				}
 
 				/* Is there a recorder? */
@@ -2927,7 +3000,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
 		/* If current bitrate for any stream is not calculated (-1, null), let's reset current lookup state */
-		if (source_bw == -1 || source_bw == NULL) {
+		if (source_bw == NULL || source_bw == -1) {
 			is_stream_stats_available = FALSE;
 			best_src = NULL;
 			break;
@@ -3552,7 +3625,7 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 }
 
 static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len) {
-	if(codec == JANUS_STREAMING_VP8) {
+	if(codec == CM_RTPBCAST_VP8) {
 		/* VP8 packet */
 		if(!buffer || len < 28)
 			return FALSE;
@@ -3638,7 +3711,7 @@ static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len) {
 		}
 		/* If we got here it's not a key frame */
 		return FALSE;
-	} else if(codec == JANUS_STREAMING_H264) {
+	} else if(codec == CM_RTPBCAST_H264) {
 		/* Parse RTP header first */
 		rtp_header *header = (rtp_header *)buffer;
 		guint32 timestamp = ntohl(header->timestamp);
