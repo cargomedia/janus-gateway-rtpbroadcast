@@ -206,6 +206,7 @@ static GThread *udp_relay;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
+static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len);
 static char *str_replace(char *instr, const char *needle, const char *replace);
 
 /* Helper to remove insane code duplication everywhere
@@ -252,6 +253,7 @@ typedef struct cm_rtpbcast_codecs {
 	gint pt[AV];
 	char *rtpmap[AV];
 	char *fmtp[AV];
+	gint video_codec;
 } cm_rtpbcast_codecs;
 
 #define STAT_SECOND 1000000
@@ -316,6 +318,16 @@ static void cm_rtpbcast_stop_recording(cm_rtpbcast_mountpoint *, int);
 static void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *, int);
 static void cm_rtpbcast_stop_thumbnailing(cm_rtpbcast_mountpoint *, int);
 
+typedef struct cm_rtpbcast_rtp_keyframe {
+	gboolean enabled;
+	/* If enabled, we store the packets of the last keyframe, to immediately send them for new viewers */
+	GList *latest_keyframe;
+	/* This is where we store packets while we're still collecting the whole keyframe */
+	GList *temp_keyframe;
+	guint32 temp_ts;
+	janus_mutex mutex;
+} cm_rtpbcast_rtp_keyframe;
+
 typedef struct cm_rtpbcast_rtp_source {
 	gboolean active;
 	guint port[AV];
@@ -345,8 +357,14 @@ typedef struct cm_rtpbcast_rtp_source {
 
 	GList/*<unowned cm_rtpbcast_session>*/ *listeners;
 	GList/*<unowned cm_rtpbcast_session>*/ *waiters;	 /* listeners waiting for keyframe */
+	cm_rtpbcast_rtp_keyframe keyframe;
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_source;
+
+#define JANUS_STREAMING_VP8		0
+#define JANUS_STREAMING_H264	1
+#define JANUS_STREAMING_VP9		2
+
 static cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray/* cm_rtpbcast_rtp_source* */ *, guint64);
 static void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_source *newsrc);
 static void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid);
@@ -2280,6 +2298,12 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		live_rtp_source->frame_key_distance = 0;
 		live_rtp_source->frame_key_overdue = FALSE;
 
+		live_rtp_source->keyframe.enabled = TRUE;
+		live_rtp_source->keyframe.latest_keyframe = NULL;
+		live_rtp_source->keyframe.temp_keyframe = NULL;
+		live_rtp_source->keyframe.temp_ts = 0;
+		janus_mutex_init(&live_rtp_source->keyframe.mutex);
+
 		live_rtp_source->listeners = NULL;
 		live_rtp_source->waiters = NULL;
 		janus_mutex_init(&live_rtp_source->mutex);
@@ -3517,4 +3541,124 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	json_object_set_new(v, "session", u);
 
 	return v;
+}
+
+static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len) {
+	if(codec == JANUS_STREAMING_VP8) {
+		/* VP8 packet */
+		if(!buffer || len < 28)
+			return FALSE;
+		/* Parse RTP header first */
+		rtp_header *header = (rtp_header *)buffer;
+		guint32 timestamp = ntohl(header->timestamp);
+		guint16 seq = ntohs(header->seq_number);
+		JANUS_LOG(LOG_HUGE, "Checking if VP8 packet (size=%d, seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n",
+			len, seq, timestamp);
+		uint16_t skip = 0;
+		if(header->extension) {
+			janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
+			JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
+				ntohs(ext->type), ntohs(ext->length));
+			skip = 4 + ntohs(ext->length)*4;
+		}
+		buffer += 12+skip;
+		/* Parse VP8 header now */
+		uint8_t vp8pd = *buffer;
+		uint8_t xbit = (vp8pd & 0x80);
+		uint8_t sbit = (vp8pd & 0x10);
+		if(xbit) {
+			JANUS_LOG(LOG_HUGE, "  -- X bit is set!\n");
+			/* Read the Extended control bits octet */
+			buffer++;
+			vp8pd = *buffer;
+			uint8_t ibit = (vp8pd & 0x80);
+			uint8_t lbit = (vp8pd & 0x40);
+			uint8_t tbit = (vp8pd & 0x20);
+			uint8_t kbit = (vp8pd & 0x10);
+			if(ibit) {
+				JANUS_LOG(LOG_HUGE, "  -- I bit is set!\n");
+				/* Read the PictureID octet */
+				buffer++;
+				vp8pd = *buffer;
+				uint16_t picid = vp8pd, wholepicid = picid;
+				uint8_t mbit = (vp8pd & 0x80);
+				if(mbit) {
+					JANUS_LOG(LOG_HUGE, "  -- M bit is set!\n");
+					memcpy(&picid, buffer, sizeof(uint16_t));
+					wholepicid = ntohs(picid);
+					picid = (wholepicid & 0x7FFF);
+					buffer++;
+				}
+				JANUS_LOG(LOG_HUGE, "  -- -- PictureID: %"SCNu16"\n", picid);
+			}
+			if(lbit) {
+				JANUS_LOG(LOG_HUGE, "  -- L bit is set!\n");
+				/* Read the TL0PICIDX octet */
+				buffer++;
+				vp8pd = *buffer;
+			}
+			if(tbit || kbit) {
+				JANUS_LOG(LOG_HUGE, "  -- T/K bit is set!\n");
+				/* Read the TID/KEYIDX octet */
+				buffer++;
+				vp8pd = *buffer;
+			}
+			buffer++;	/* Now we're in the payload */
+			if(sbit) {
+				JANUS_LOG(LOG_HUGE, "  -- S bit is set!\n");
+				unsigned long int vp8ph = 0;
+				memcpy(&vp8ph, buffer, 4);
+				vp8ph = ntohl(vp8ph);
+				uint8_t pbit = ((vp8ph & 0x01000000) >> 24);
+				if(!pbit) {
+					JANUS_LOG(LOG_HUGE, "  -- P bit is NOT set!\n");
+					/* It is a key frame! Get resolution for debugging */
+					unsigned char *c = (unsigned char *)buffer+3;
+					/* vet via sync code */
+					if(c[0]!=0x9d||c[1]!=0x01||c[2]!=0x2a) {
+						JANUS_LOG(LOG_WARN, "First 3-bytes after header not what they're supposed to be?\n");
+					} else {
+						int vp8w = swap2(*(unsigned short*)(c+3))&0x3fff;
+						int vp8ws = swap2(*(unsigned short*)(c+3))>>14;
+						int vp8h = swap2(*(unsigned short*)(c+5))&0x3fff;
+						int vp8hs = swap2(*(unsigned short*)(c+5))>>14;
+						JANUS_LOG(LOG_HUGE, "Got a VP8 key frame: %dx%d (scale=%dx%d)\n", vp8w, vp8h, vp8ws, vp8hs);
+						return TRUE;
+					}
+				}
+			}
+		}
+		/* If we got here it's not a key frame */
+		return FALSE;
+	} else if(codec == JANUS_STREAMING_H264) {
+		/* Parse RTP header first */
+		rtp_header *header = (rtp_header *)buffer;
+		guint32 timestamp = ntohl(header->timestamp);
+		guint16 seq = ntohs(header->seq_number);
+		JANUS_LOG(LOG_HUGE, "Checking if H264 packet (size=%d, seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n",
+			len, seq, timestamp);
+		uint16_t skip = 0;
+		if(header->extension) {
+			janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
+			JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
+				ntohs(ext->type), ntohs(ext->length));
+			skip = 4 + ntohs(ext->length)*4;
+		}
+		buffer += 12+skip;
+		/* Parse H264 header now */
+		uint8_t fragment = *buffer & 0x1F;
+		uint8_t nal = *(buffer+1) & 0x1F;
+		uint8_t start_bit = *(buffer+1) & 0x80;
+		JANUS_LOG(LOG_HUGE, "Fragment=%d, NAL=%d, Start=%d\n", fragment, nal, start_bit);
+		if(fragment == 5 ||
+				((fragment == 28 || fragment == 29) && nal == 5 && start_bit == 128)) {
+			JANUS_LOG(LOG_HUGE, "Got an H264 key frame\n");
+			return TRUE;
+		}
+		/* If we got here it's not a key frame */
+		return FALSE;
+	} else {
+		/* FIXME Not a clue */
+		return FALSE;
+	}
 }
