@@ -588,7 +588,7 @@ make install
 
 Documentation
 -------------
-This project include `.doxygen` file which allows to create docu.
+This project includes `.doxygen` file which allows to create docu.
 
 Requirements
 ```
@@ -601,7 +601,7 @@ Build
 doxygen .doxygen
 ```
 
-By default the output will be stored in `/docu`.
+By default the output will be stored in `./docu`.
 
 Packages
 --------
