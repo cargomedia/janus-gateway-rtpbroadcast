@@ -1518,6 +1518,21 @@ void cm_rtpbcast_setup_media(janus_plugin_session *handle) {
 	g_atomic_int_set(&session->hangingup, 0);
 	/* TODO Only start streaming when we get this event */
 	memset(&session->context, 0, sizeof(session->context));
+
+	/* If this is related to a live RTP mountpoint, any keyframe we can shoot already? */
+//	JANUS_LOG(LOG_INFO, "Any keyframe to send?\n");
+//	cm_rtpbcast_rtp_source *source = session->source;
+//	janus_mutex_lock(&source->keyframe.mutex);
+//	if(source->keyframe.latest_keyframe != NULL) {
+//		JANUS_LOG(LOG_INFO, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
+//		GList *temp = source->keyframe.latest_keyframe;
+//		while(temp) {
+//			cm_rtpbcast_relay_rtp_packet(session, temp->data);
+//			temp = temp->next;
+//		}
+//	}
+//	janus_mutex_unlock(&source->keyframe.mutex);
+
 	session->started = TRUE;
 	/* Prepare JSON event */
 	json_t *event = json_object();
@@ -2160,6 +2175,28 @@ static void cm_rtpbcast_rtp_source_free(gpointer src) {
 	g_list_free(source->waiters);
 	janus_mutex_unlock(&source->mutex);
 
+	janus_mutex_lock(&source->keyframe.mutex);
+	GList *temp = NULL;
+	while(source->keyframe.latest_keyframe) {
+		temp = g_list_first(source->keyframe.latest_keyframe);
+		source->keyframe.latest_keyframe = g_list_remove_link(source->keyframe.latest_keyframe, temp);
+		cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+		g_free(pkt->data);
+		g_free(pkt);
+		g_list_free(temp);
+	}
+	source->keyframe.latest_keyframe = NULL;
+	while(source->keyframe.temp_keyframe) {
+		temp = g_list_first(source->keyframe.temp_keyframe);
+		source->keyframe.temp_keyframe = g_list_remove_link(source->keyframe.temp_keyframe, temp);
+		cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+		g_free(pkt->data);
+		g_free(pkt);
+		g_list_free(temp);
+	}
+	source->keyframe.latest_keyframe = NULL;
+	janus_mutex_unlock(&source->keyframe.mutex);
+
 	g_free(source);
 }
 
@@ -2684,7 +2721,7 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		//~ JANUS_LOG(LOG_ERR, "Invalid session...\n");
 		return;
 	}
-	if(!session->started || session->paused) {
+	if(!packet->is_keyframe && (!session->started || session->paused)) {
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
 	}
