@@ -196,6 +196,7 @@ janus_plugin *create(void) {
 	return &cm_rtpbcast_plugin;
 }
 
+typedef struct cm_rtpbcast_rtp_source cm_rtpbcast_rtp_source;
 
 /* Useful stuff */
 static volatile gint initialized = 0, stopping = 0;
@@ -206,7 +207,7 @@ static GThread *udp_relay;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
-static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len);
+static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len, cm_rtpbcast_rtp_source *src);
 static char *str_replace(char *instr, const char *needle, const char *replace);
 
 /* Helper to remove insane code duplication everywhere
@@ -280,7 +281,6 @@ typedef struct cm_rtpbcast_stats {
 static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *);
 static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *, gsize, guint32, int);
 
-typedef struct cm_rtpbcast_rtp_source cm_rtpbcast_rtp_source;
 typedef struct cm_rtpbcast_recorder {
 	janus_recorder *r;
 	cm_rtpbcast_rtp_source *source;
@@ -343,8 +343,6 @@ typedef struct cm_rtpbcast_rtp_source {
 	int frame_height;
 	int frame_x_scale;
 	int frame_y_scale;
-	int frame_mbw;
-	int frame_mbh;
 
 	guint32 frame_count;
 	guint32 frame_last_count;
@@ -2239,8 +2237,6 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 		live_rtp_source->frame_height = 0;
 		live_rtp_source->frame_x_scale = 0;
 		live_rtp_source->frame_y_scale = 0;
-		live_rtp_source->frame_mbw = 0;
-		live_rtp_source->frame_mbh = 0;
 
 		live_rtp_source->frame_count = 0;
 		live_rtp_source->frame_last_count = 0;
@@ -2484,30 +2480,13 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 				is_video_keyframe = FALSE;
 				if (j == VIDEO) {
-
-					guint64 ml = janus_get_monotonic_time();
-					/* Calculate frame rate (FPS) in the stream */
-					if (ml - source->frame_last_usec >= STAT_SECOND) {
-						source->frame_rate = source->frame_count - source->frame_last_count;
-						source->frame_last_count = source->frame_count;
-						/* Keep timestamp for last FPS update */
-						source->frame_last_usec = ml;
-					}
-					source->frame_count++;
-
 					if(source->keyframe.temp_ts > 0 && ntohl(rtp->timestamp) != source->keyframe.temp_ts) {
-						/* We received the last part of the keyframe, get rid of the old one and use this from now on */
-						JANUS_LOG(LOG_HUGE, "[%s] ... ... last part of keyframe received! ts=%"SCNu32", %d packets\n",
-							mountpoint->name, source->keyframe.temp_ts, g_list_length(source->keyframe.temp_keyframe));
 
 						is_video_keyframe = TRUE;
 
-						/* Calculate key frame distance in the stream */
-						source->frame_key_distance = source->frame_count - source->frame_key_last;
-						source->frame_key_last = source->frame_count;
-
-						JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
-						cm_rtpbcast_process_switchers(source);
+						/* We received the last part of the keyframe, get rid of the old one and use this from now on */
+						JANUS_LOG(LOG_HUGE, "[%s] ... ... last part of keyframe received! ts=%"SCNu32", %d packets\n",
+							mountpoint->name, source->keyframe.temp_ts, g_list_length(source->keyframe.temp_keyframe));
 
 						if (source->frame_key_overdue) {
 							JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
@@ -2545,7 +2524,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 						pkt->seq_number = ntohs(rtp->seq_number);
 						source->keyframe.temp_keyframe = g_list_append(source->keyframe.temp_keyframe, pkt);
 						janus_mutex_unlock(&source->keyframe.mutex);
-					} else if(cm_rtpbcast_is_keyframe(source->codecs.codec[VIDEO], buffer, bytes)) {
+					} else if(cm_rtpbcast_is_keyframe(source->codecs.codec[VIDEO], buffer, bytes, source)) {
 						/* New keyframe, start saving it */
 						source->keyframe.temp_ts = ntohl(rtp->timestamp);
 						JANUS_LOG(LOG_HUGE, "[%s] New keyframe received! ts=%"SCNu32"\n", mountpoint->name, source->keyframe.temp_ts);
@@ -2568,7 +2547,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 						/* If keyframe is overdue, complain */
 						guint32 kd = source->frame_count - source->frame_key_last;
 						if (kd > cm_rtpbcast_settings.keyframe_distance_alert) {
-							JANUS_LOG(LOG_ERR, "[%s] Key frame overdue on source %d\n", name, source->index);
+							JANUS_LOG(LOG_INFO, "[%s] Key frame overdue on source %d\n", name, source->index);
 							source->frame_key_overdue = TRUE;
 						}
 					}
@@ -2619,10 +2598,28 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					}
 				}
 
+				/* Update all waiters with new keyframe packets and upgrade them to listeners list */
+				if(is_video_keyframe) {
+					JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
+					GList *waiters = g_list_copy (source->waiters);
+					cm_rtpbcast_process_switchers(source);
+					janus_mutex_lock(&source->keyframe.mutex);
+					if(source->keyframe.latest_keyframe != NULL) {
+						JANUS_LOG(LOG_HUGE, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
+						GList *temp = source->keyframe.latest_keyframe;
+						while(temp) {
+							g_list_foreach(waiters, cm_rtpbcast_relay_rtp_packet, temp->data);
+							temp = temp->next;
+						}
+					}
+					janus_mutex_unlock(&source->keyframe.mutex);
+				}
+
 				/* Go! */
 				janus_mutex_lock(&source->mutex);
 				g_list_foreach(source->listeners, cm_rtpbcast_relay_rtp_packet, &packet);
 				janus_mutex_unlock(&source->mutex);
+
 				continue;
 			}
 		}
@@ -3515,7 +3512,16 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	return v;
 }
 
-static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len) {
+/* Helpers to check if frame is a key frame (see post processor code) */
+#if defined(__ppc__) || defined(__ppc64__)
+	# define swap2(d)  \
+	((d&0x000000ff)<<8) |  \
+	((d&0x0000ff00)>>8)
+#else
+	# define swap2(d) d
+#endif
+
+static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len, cm_rtpbcast_rtp_source *src) {
 	if(codec == CM_RTPBCAST_VP8) {
 		/* VP8 packet */
 		if(!buffer || len < 28)
@@ -3575,28 +3581,52 @@ static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len) {
 				buffer++;
 				vp8pd = *buffer;
 			}
-			buffer++;	/* Now we're in the payload */
-			if(sbit) {
-				JANUS_LOG(LOG_HUGE, "  -- S bit is set!\n");
-				unsigned long int vp8ph = 0;
-				memcpy(&vp8ph, buffer, 4);
-				vp8ph = ntohl(vp8ph);
-				uint8_t pbit = ((vp8ph & 0x01000000) >> 24);
-				if(!pbit) {
-					JANUS_LOG(LOG_HUGE, "  -- P bit is NOT set!\n");
-					/* It is a key frame! Get resolution for debugging */
-					unsigned char *c = (unsigned char *)buffer+3;
-					/* vet via sync code */
-					if(c[0]!=0x9d||c[1]!=0x01||c[2]!=0x2a) {
-						JANUS_LOG(LOG_WARN, "First 3-bytes after header not what they're supposed to be?\n");
-					} else {
-						int vp8w = swap2(*(unsigned short*)(c+3))&0x3fff;
-						int vp8ws = swap2(*(unsigned short*)(c+3))>>14;
-						int vp8h = swap2(*(unsigned short*)(c+5))&0x3fff;
-						int vp8hs = swap2(*(unsigned short*)(c+5))>>14;
-						JANUS_LOG(LOG_HUGE, "Got a VP8 key frame: %dx%d (scale=%dx%d)\n", vp8w, vp8h, vp8ws, vp8hs);
-						return TRUE;
+		}
+		buffer++;	/* Now we're in the payload */
+		if(sbit) {
+
+			if (src) {
+				guint64 ml = janus_get_monotonic_time();
+				/* Calculate frame rate (FPS) in the stream */
+				if (ml - src->frame_last_usec >= STAT_SECOND) {
+					src->frame_rate = src->frame_count - src->frame_last_count;
+					src->frame_last_count = src->frame_count;
+					/* Keep timestamp for last FPS update */
+					src->frame_last_usec = ml;
+				}
+				src->frame_count++;
+			}
+
+			JANUS_LOG(LOG_HUGE, "  -- S bit is set!\n");
+			unsigned long int vp8ph = 0;
+			memcpy(&vp8ph, buffer, 4);
+			vp8ph = ntohl(vp8ph);
+			uint8_t pbit = ((vp8ph & 0x01000000) >> 24);
+			if(!pbit) {
+				JANUS_LOG(LOG_HUGE, "  -- P bit is NOT set!\n");
+				/* It is a key frame! Get resolution for debugging */
+				unsigned char *c = (unsigned char *)buffer+3;
+				/* vet via sync code */
+				if(c[0]!=0x9d||c[1]!=0x01||c[2]!=0x2a) {
+					JANUS_LOG(LOG_WARN, "First 3-bytes after header not what they're supposed to be?\n");
+				} else {
+					int vp8w = swap2(*(unsigned short*)(c+3))&0x3fff;
+					int vp8ws = swap2(*(unsigned short*)(c+3))>>14;
+					int vp8h = swap2(*(unsigned short*)(c+5))&0x3fff;
+					int vp8hs = swap2(*(unsigned short*)(c+5))>>14;
+					JANUS_LOG(LOG_HUGE, "Got a VP8 key frame: %dx%d (scale=%dx%d)\n", vp8w, vp8h, vp8ws, vp8hs);
+
+					if (src) {
+						src->frame_width = vp8w;
+						src->frame_height = vp8h;
+						src->frame_x_scale = vp8ws;
+						src->frame_y_scale = vp8hs;
+						/* Calculate key frame distance in the stream */
+						src->frame_key_distance = src->frame_count - src->frame_key_last;
+						src->frame_key_last = src->frame_count;
 					}
+
+					return TRUE;
 				}
 			}
 		}
