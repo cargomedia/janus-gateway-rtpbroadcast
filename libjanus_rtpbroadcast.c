@@ -2598,7 +2598,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					}
 				}
 
-				/* Update all waiters with new keyframe packets and upgrade them to listeners list */
+				/* Update all waiting sessions with new keyframe packets and upgrade them to listeners list */
 				if(is_video_keyframe) {
 					JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
 					GList *waiters = g_list_copy (source->waiters);
@@ -2613,6 +2613,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 						}
 					}
 					janus_mutex_unlock(&source->keyframe.mutex);
+					g_list_free(waiters);
 				}
 
 				/* Go! */
