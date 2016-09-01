@@ -207,7 +207,7 @@ static GThread *udp_relay;
 static void *cm_rtpbcast_handler(void *data);
 static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data);
 static void *cm_rtpbcast_relay_thread(void *data);
-static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len, cm_rtpbcast_rtp_source *src);
+static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets);
 static char *str_replace(char *instr, const char *needle, const char *replace);
 
 /* Helper to remove insane code duplication everywhere
@@ -327,6 +327,27 @@ typedef struct cm_rtpbcast_rtp_keyframe {
 	guint32 temp_ts;
 	janus_mutex mutex;
 } cm_rtpbcast_rtp_keyframe;
+
+typedef struct cm_rtpbcast_vp8_payload_dscr {
+	gboolean is_sbit;
+	gboolean is_xbit;
+	gboolean is_mbit;
+	gboolean is_pbit;
+
+	gboolean is_keyframe;
+
+	int width;
+	int height;
+	int width_scale;
+	int height_scale;
+} cm_rtpbcast_vp8_payload_dscr;
+
+typedef struct cm_rtpbcast_h264_payload_dscr {
+	gboolean is_keyframe;
+} cm_rtpbcast_h264_payload_dscr;
+
+cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int len);
+cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int len);
 
 typedef struct cm_rtpbcast_rtp_source {
 	gboolean active;
@@ -2503,19 +2524,37 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 				is_video_keyframe = FALSE;
 				if (j == VIDEO) {
+					cm_rtpbcast_vp8_payload_dscr *vp8pay = NULL;
+					cm_rtpbcast_h264_payload_dscr *h264 = NULL;
+					if(source->codecs.codec[VIDEO] == CM_RTPBCAST_VP8) {
+						vp8pay = cm_rtpbcast_vp8_parse_payload(buffer, bytes);
+						if(vp8pay->is_sbit) {
+							guint64 ml = janus_get_monotonic_time();
+							/* Calculate frame rate (FPS) in the stream */
+							if (ml - source->frame_last_usec >= STAT_SECOND) {
+								source->frame_rate = source->frame_count - source->frame_last_count;
+								source->frame_last_count = source->frame_count;
+								/* Keep timestamp for last FPS update */
+								source->frame_last_usec = ml;
+							}
+							source->frame_count++;
+						}
+						if(vp8pay->is_keyframe) {
+							source->frame_width = vp8pay->width;
+							source->frame_height = vp8pay->height;
+							source->frame_x_scale = vp8pay->width_scale;
+							source->frame_y_scale = vp8pay->height_scale;
+							/* Calculate key frame distance in the stream */
+							source->frame_key_distance = source->frame_count - source->frame_key_last;
+							source->frame_key_last = source->frame_count;
+						}
+					} else if (source->codecs.codec[VIDEO] == CM_RTPBCAST_H264) {
+						h264 = cm_rtpbcast_h264_parse_payload(buffer, bytes);
+					}
 					if(source->keyframe.temp_ts > 0 && ntohl(rtp->timestamp) != source->keyframe.temp_ts) {
-
-						is_video_keyframe = TRUE;
-
 						/* We received the last part of the keyframe, get rid of the old one and use this from now on */
 						JANUS_LOG(LOG_HUGE, "[%s] ... ... last part of keyframe received! ts=%"SCNu32", %d packets\n",
 							mountpoint->name, source->keyframe.temp_ts, g_list_length(source->keyframe.temp_keyframe));
-
-						if (source->frame_key_overdue) {
-							JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
-								source->frame_key_distance - cm_rtpbcast_settings.keyframe_distance_alert, source->index);
-							source->frame_key_overdue = FALSE;
-						}
 
 						source->keyframe.temp_ts = 0;
 						janus_mutex_lock(&source->keyframe.mutex);
@@ -2528,9 +2567,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							g_free(pkt);
 							g_list_free(temp);
 						}
-						source->keyframe.latest_keyframe = source->keyframe.temp_keyframe;
+						if(cm_rtpbcast_vp8_is_frame_complete(source->keyframe.temp_keyframe)) {
+							source->keyframe.latest_keyframe = source->keyframe.temp_keyframe;
+							is_video_keyframe = TRUE;
+						}
 						source->keyframe.temp_keyframe = NULL;
 						janus_mutex_unlock(&source->keyframe.mutex);
+
+						if (source->frame_key_overdue) {
+							JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
+								source->frame_key_distance - cm_rtpbcast_settings.keyframe_distance_alert, source->index);
+							source->frame_key_overdue = FALSE;
+						}
 					} else if(ntohl(rtp->timestamp) == source->keyframe.temp_ts) {
 						/* Part of the keyframe we're currently saving, store */
 						janus_mutex_lock(&source->keyframe.mutex);
@@ -2547,7 +2595,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 						pkt->seq_number = ntohs(rtp->seq_number);
 						source->keyframe.temp_keyframe = g_list_append(source->keyframe.temp_keyframe, pkt);
 						janus_mutex_unlock(&source->keyframe.mutex);
-					} else if(cm_rtpbcast_is_keyframe(source->codecs.codec[VIDEO], buffer, bytes, source)) {
+					} else if((vp8pay && vp8pay->is_keyframe) || (h264 && h264->is_keyframe)) {
 						/* New keyframe, start saving it */
 						source->keyframe.temp_ts = ntohl(rtp->timestamp);
 						JANUS_LOG(LOG_HUGE, "[%s] New keyframe received! ts=%"SCNu32"\n", mountpoint->name, source->keyframe.temp_ts);
@@ -3545,146 +3593,152 @@ json_t *cm_rtpbcast_source_to_json(cm_rtpbcast_rtp_source *src, cm_rtpbcast_sess
 	# define swap2(d) d
 #endif
 
-static gboolean cm_rtpbcast_is_keyframe(gint codec, char* buffer, int len, cm_rtpbcast_rtp_source *src) {
-	if(codec == CM_RTPBCAST_VP8) {
-		/* VP8 packet */
-		if(!buffer || len < 28)
-			return FALSE;
-		/* Parse RTP header first */
-		rtp_header *header = (rtp_header *)buffer;
-		guint32 timestamp = ntohl(header->timestamp);
-		guint16 seq = ntohs(header->seq_number);
-		JANUS_LOG(LOG_HUGE, "Checking if VP8 packet (size=%d, seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n",
-			len, seq, timestamp);
-		uint16_t skip = 0;
-		if(header->extension) {
-			janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
-			JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
-				ntohs(ext->type), ntohs(ext->length));
-			skip = 4 + ntohs(ext->length)*4;
-		}
-		buffer += 12+skip;
-		/* Parse VP8 header now */
-		uint8_t vp8pd = *buffer;
-		uint8_t xbit = (vp8pd & 0x80);
-		uint8_t sbit = (vp8pd & 0x10);
-		if(xbit) {
-			JANUS_LOG(LOG_HUGE, "  -- X bit is set!\n");
-			/* Read the Extended control bits octet */
+cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int len) {
+	if(!buffer || len < 28)
+		return FALSE;
+	/* Parse RTP header first */
+	rtp_header *header = (rtp_header *)buffer;
+	guint32 timestamp = ntohl(header->timestamp);
+	guint16 seq = ntohs(header->seq_number);
+	JANUS_LOG(LOG_HUGE, "Checking if VP8 packet (seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n", seq, timestamp);
+	uint16_t skip = 0;
+	if(header->extension) {
+		janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
+		JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
+			ntohs(ext->type), ntohs(ext->length));
+		skip = 4 + ntohs(ext->length)*4;
+	}
+	buffer += 12+skip;
+	/* Parse VP8 header now */
+	uint8_t vp8pd = *buffer;
+	uint8_t xbit = (vp8pd & 0x80);
+	uint8_t sbit = (vp8pd & 0x10);
+
+	cm_rtpbcast_vp8_payload_dscr *vp8pay = g_malloc0(sizeof(cm_rtpbcast_vp8_payload_dscr));
+	vp8pay->is_xbit = FALSE;
+	vp8pay->is_sbit = FALSE;
+	vp8pay->is_pbit = FALSE;
+	vp8pay->is_mbit = FALSE;
+	vp8pay->is_keyframe = FALSE;
+	vp8pay->width = 0;
+	vp8pay->width_scale = 0;
+	vp8pay->height = 0;
+	vp8pay->height_scale = 0;
+
+	if(xbit) {
+		vp8pay->is_xbit = TRUE;
+		JANUS_LOG(LOG_HUGE, "  -- X bit is set!\n");
+		/* Read the Extended control bits octet */
+		buffer++;
+		vp8pd = *buffer;
+		uint8_t ibit = (vp8pd & 0x80);
+		uint8_t lbit = (vp8pd & 0x40);
+		uint8_t tbit = (vp8pd & 0x20);
+		uint8_t kbit = (vp8pd & 0x10);
+		if(ibit) {
+			JANUS_LOG(LOG_HUGE, "  -- I bit is set!\n");
+			/* Read the PictureID octet */
 			buffer++;
 			vp8pd = *buffer;
-			uint8_t ibit = (vp8pd & 0x80);
-			uint8_t lbit = (vp8pd & 0x40);
-			uint8_t tbit = (vp8pd & 0x20);
-			uint8_t kbit = (vp8pd & 0x10);
-			if(ibit) {
-				JANUS_LOG(LOG_HUGE, "  -- I bit is set!\n");
-				/* Read the PictureID octet */
+			uint16_t picid = vp8pd, wholepicid = picid;
+			uint8_t mbit = (vp8pd & 0x80);
+			if(mbit) {
+				vp8pay->is_mbit = TRUE;
+				JANUS_LOG(LOG_HUGE, "  -- M bit is set!\n");
+				memcpy(&picid, buffer, sizeof(uint16_t));
+				wholepicid = ntohs(picid);
+				picid = (wholepicid & 0x7FFF);
 				buffer++;
-				vp8pd = *buffer;
-				uint16_t picid = vp8pd, wholepicid = picid;
-				uint8_t mbit = (vp8pd & 0x80);
-				if(mbit) {
-					JANUS_LOG(LOG_HUGE, "  -- M bit is set!\n");
-					memcpy(&picid, buffer, sizeof(uint16_t));
-					wholepicid = ntohs(picid);
-					picid = (wholepicid & 0x7FFF);
-					buffer++;
-				}
-				JANUS_LOG(LOG_HUGE, "  -- -- PictureID: %"SCNu16"\n", picid);
 			}
-			if(lbit) {
-				JANUS_LOG(LOG_HUGE, "  -- L bit is set!\n");
-				/* Read the TL0PICIDX octet */
-				buffer++;
-				vp8pd = *buffer;
-			}
-			if(tbit || kbit) {
-				JANUS_LOG(LOG_HUGE, "  -- T/K bit is set!\n");
-				/* Read the TID/KEYIDX octet */
-				buffer++;
-				vp8pd = *buffer;
-			}
+			JANUS_LOG(LOG_HUGE, "  -- -- PictureID: %"SCNu16"\n", picid);
 		}
-		buffer++;	/* Now we're in the payload */
-		if(sbit) {
-
-			if (src) {
-				guint64 ml = janus_get_monotonic_time();
-				/* Calculate frame rate (FPS) in the stream */
-				if (ml - src->frame_last_usec >= STAT_SECOND) {
-					src->frame_rate = src->frame_count - src->frame_last_count;
-					src->frame_last_count = src->frame_count;
-					/* Keep timestamp for last FPS update */
-					src->frame_last_usec = ml;
-				}
-				src->frame_count++;
-			}
-
-			JANUS_LOG(LOG_HUGE, "  -- S bit is set!\n");
-			unsigned long int vp8ph = 0;
-			memcpy(&vp8ph, buffer, 4);
-			vp8ph = ntohl(vp8ph);
-			uint8_t pbit = ((vp8ph & 0x01000000) >> 24);
-			if(!pbit) {
-				JANUS_LOG(LOG_HUGE, "  -- P bit is NOT set!\n");
-				/* It is a key frame! Get resolution for debugging */
-				unsigned char *c = (unsigned char *)buffer+3;
-				/* vet via sync code */
-				if(c[0]!=0x9d||c[1]!=0x01||c[2]!=0x2a) {
-					JANUS_LOG(LOG_WARN, "First 3-bytes after header not what they're supposed to be?\n");
-				} else {
-					int vp8w = swap2(*(unsigned short*)(c+3))&0x3fff;
-					int vp8ws = swap2(*(unsigned short*)(c+3))>>14;
-					int vp8h = swap2(*(unsigned short*)(c+5))&0x3fff;
-					int vp8hs = swap2(*(unsigned short*)(c+5))>>14;
-					JANUS_LOG(LOG_HUGE, "Got a VP8 key frame: %dx%d (scale=%dx%d)\n", vp8w, vp8h, vp8ws, vp8hs);
-
-					if (src) {
-						src->frame_width = vp8w;
-						src->frame_height = vp8h;
-						src->frame_x_scale = vp8ws;
-						src->frame_y_scale = vp8hs;
-						/* Calculate key frame distance in the stream */
-						src->frame_key_distance = src->frame_count - src->frame_key_last;
-						src->frame_key_last = src->frame_count;
-					}
-
-					return TRUE;
-				}
-			}
+		if(lbit) {
+			JANUS_LOG(LOG_HUGE, "  -- L bit is set!\n");
+			/* Read the TL0PICIDX octet */
+			buffer++;
+			vp8pd = *buffer;
 		}
-		/* If we got here it's not a key frame */
-		return FALSE;
-	} else if(codec == CM_RTPBCAST_H264) {
-		/* Parse RTP header first */
-		rtp_header *header = (rtp_header *)buffer;
-		guint32 timestamp = ntohl(header->timestamp);
-		guint16 seq = ntohs(header->seq_number);
-		JANUS_LOG(LOG_HUGE, "Checking if H264 packet (size=%d, seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n",
-			len, seq, timestamp);
-		uint16_t skip = 0;
-		if(header->extension) {
-			janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
-			JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
-				ntohs(ext->type), ntohs(ext->length));
-			skip = 4 + ntohs(ext->length)*4;
+		if(tbit || kbit) {
+			JANUS_LOG(LOG_HUGE, "  -- T/K bit is set!\n");
+			/* Read the TID/KEYIDX octet */
+			buffer++;
+			vp8pd = *buffer;
 		}
-		buffer += 12+skip;
-		/* Parse H264 header now */
-		uint8_t fragment = *buffer & 0x1F;
-		uint8_t nal = *(buffer+1) & 0x1F;
-		uint8_t start_bit = *(buffer+1) & 0x80;
-		JANUS_LOG(LOG_HUGE, "Fragment=%d, NAL=%d, Start=%d\n", fragment, nal, start_bit);
-		if(fragment == 5 ||
-				((fragment == 28 || fragment == 29) && nal == 5 && start_bit == 128)) {
-			JANUS_LOG(LOG_HUGE, "Got an H264 key frame\n");
-			return TRUE;
-		}
-		/* If we got here it's not a key frame */
-		return FALSE;
-	} else {
-		/* FIXME Not a clue */
-		return FALSE;
 	}
+	buffer++;	/* Now we're in the payload */
+	if(sbit) {
+		vp8pay->is_sbit = TRUE;
+		JANUS_LOG(LOG_HUGE, "  -- S bit is set!\n");
+		unsigned long int vp8ph = 0;
+		memcpy(&vp8ph, buffer, 4);
+		vp8ph = ntohl(vp8ph);
+		uint8_t pbit = ((vp8ph & 0x01000000) >> 24);
+		if(!pbit) {
+			vp8pay->is_pbit = TRUE;
+			JANUS_LOG(LOG_HUGE, "  -- P bit is NOT set!\n");
+			/* It is a key frame! Get resolution for debugging */
+			unsigned char *c = (unsigned char *)buffer+3;
+			/* vet via sync code */
+			if(c[0]!=0x9d||c[1]!=0x01||c[2]!=0x2a) {
+				JANUS_LOG(LOG_WARN, "First 3-bytes after header not what they're supposed to be?\n");
+			} else {
+				vp8pay->is_keyframe = TRUE;
+
+				int vp8w = swap2(*(unsigned short*)(c+3))&0x3fff;
+				int vp8ws = swap2(*(unsigned short*)(c+3))>>14;
+				int vp8h = swap2(*(unsigned short*)(c+5))&0x3fff;
+				int vp8hs = swap2(*(unsigned short*)(c+5))>>14;
+				JANUS_LOG(LOG_HUGE, "Got a VP8 key frame: %dx%d (scale=%dx%d)\n", vp8w, vp8h, vp8ws, vp8hs);
+
+				vp8pay->width = vp8w;
+				vp8pay->height = vp8h;
+				vp8pay->width_scale = vp8ws;
+				vp8pay->height_scale = vp8hs;
+			}
+		}
+	}
+	return vp8pay;
+}
+
+static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
+
+	// https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1
+	/*
+		1. Sort by sequence number
+		2. Check if no missing packets
+		3. Check if first packets has S bit set
+		4. Check if last packet has M bit set
+		5. Check if all packets have the same timestamp
+	*/
+	return TRUE;
+}
+
+cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int len) {
+	/* Parse RTP header first */
+	rtp_header *header = (rtp_header *)buffer;
+	guint32 timestamp = ntohl(header->timestamp);
+	guint16 seq = ntohs(header->seq_number);
+	JANUS_LOG(LOG_HUGE, "Checking if H264 packet (seq=%"SCNu16", ts=%"SCNu32") is a key frame...\n", seq, timestamp);
+	uint16_t skip = 0;
+	if(header->extension) {
+		janus_rtp_header_extension *ext = (janus_rtp_header_extension *)(buffer+12);
+		JANUS_LOG(LOG_HUGE, "  -- RTP extension found (type=%"SCNu16", length=%"SCNu16")\n",
+			ntohs(ext->type), ntohs(ext->length));
+		skip = 4 + ntohs(ext->length)*4;
+	}
+	buffer += 12+skip;
+	/* Parse H264 header now */
+	cm_rtpbcast_h264_payload_dscr *h264pay = g_malloc0(sizeof(cm_rtpbcast_h264_payload_dscr));
+	h264pay->is_keyframe = FALSE;
+
+	uint8_t fragment = *buffer & 0x1F;
+	uint8_t nal = *(buffer+1) & 0x1F;
+	uint8_t start_bit = *(buffer+1) & 0x80;
+	JANUS_LOG(LOG_HUGE, "Fragment=%d, NAL=%d, Start=%d\n", fragment, nal, start_bit);
+	if(fragment == 5 ||
+			((fragment == 28 || fragment == 29) && nal == 5 && start_bit == 128)) {
+		JANUS_LOG(LOG_HUGE, "Got an H264 key frame\n");
+		h264pay->is_keyframe = TRUE;
+	}
+	return h264pay;
 }
