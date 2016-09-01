@@ -1519,20 +1519,6 @@ void cm_rtpbcast_setup_media(janus_plugin_session *handle) {
 	/* TODO Only start streaming when we get this event */
 	memset(&session->context, 0, sizeof(session->context));
 
-	/* If this is related to a live RTP mountpoint, any keyframe we can shoot already? */
-//	JANUS_LOG(LOG_INFO, "Any keyframe to send?\n");
-//	cm_rtpbcast_rtp_source *source = session->source;
-//	janus_mutex_lock(&source->keyframe.mutex);
-//	if(source->keyframe.latest_keyframe != NULL) {
-//		JANUS_LOG(LOG_INFO, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
-//		GList *temp = source->keyframe.latest_keyframe;
-//		while(temp) {
-//			cm_rtpbcast_relay_rtp_packet(session, temp->data);
-//			temp = temp->next;
-//		}
-//	}
-//	janus_mutex_unlock(&source->keyframe.mutex);
-
 	session->started = TRUE;
 	/* Prepare JSON event */
 	json_t *event = json_object();
