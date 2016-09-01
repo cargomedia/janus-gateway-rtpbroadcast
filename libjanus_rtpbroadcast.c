@@ -239,7 +239,6 @@ static struct {
 	const char *recording_pattern;
 	const char *thumbnailing_pattern;
 	guint thumbnailing_interval;
-	guint thumbnailing_duration;
 	guint mountpoint_info_interval;
 	guint keyframe_distance_alert;
 	guint udp_relay_interval;
@@ -730,7 +729,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_pattern = g_strdup("thum-#{id}-#{time}-#{type}");
 	cm_rtpbcast_settings.thumbnailing_interval = 60;
-	cm_rtpbcast_settings.thumbnailing_duration = 10;
 	cm_rtpbcast_settings.keyframe_distance_alert = 600;
 	cm_rtpbcast_settings.recording_enabled = TRUE;
 	cm_rtpbcast_settings.simulate_bad_connection = FALSE;
@@ -774,7 +772,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				"minport",
 				"maxport",
 				"thumbnailing_interval",
-				"thumbnailing_duration",
 				"mountpoint_info_interval",
 				"keyframe_distance_alert",
 				"packet_loss_rate",
@@ -784,7 +781,6 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 				&cm_rtpbcast_settings.minport,
 				&cm_rtpbcast_settings.maxport,
 				&cm_rtpbcast_settings.thumbnailing_interval,
-				&cm_rtpbcast_settings.thumbnailing_duration,
 				&cm_rtpbcast_settings.mountpoint_info_interval,
 				&cm_rtpbcast_settings.keyframe_distance_alert,
 				&cm_rtpbcast_settings.packet_loss_rate,
@@ -2593,31 +2589,20 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					guint64 ml = janus_get_monotonic_time();
 					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
 							cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Source at index 0 will be recorded */
-							mountpoint->last_thumbnail = ml;
-					}
-
-					if(mountpoint->trc[0]) {
-						/* Note that keyframe arrived to this recorder */
-						if(is_video_keyframe)
-							mountpoint->trc[0]->had_keyframe = TRUE;
-
-						/* After the call it might update */
-						if (mountpoint->trc[0]->r && mountpoint->trc[0]->had_keyframe)
-							janus_recorder_save_frame(mountpoint->trc[0]->r, buffer, bytes);
-
-						/* Is it time to stop the thumbnailing? */
-						if (mountpoint->trc[0]->r && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_duration * 1000000)) {
-							/* Packets density since last source/stats average */
-							guint32 den = source->stats[j].max_seq_since_last_avg - source->stats[j].last_avg_seq;
-							/* If any packet received, let's check if all packets arrived based on sequence number */
-							if (den != 0 && source->stats[j].packets_since_last_avg < den) {
-								/* Mark the keyframe for current thumbnailing record as corrupted */
-								mountpoint->trc[0]->had_keyframe = FALSE;
-								/* Force the restart of thumbnailing record */
-								mountpoint->last_thumbnail = 0;
+							janus_mutex_lock(&source->keyframe.mutex);
+							if(source->keyframe.latest_keyframe != NULL) {
+								JANUS_LOG(LOG_HUGE, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
+								GList *temp = source->keyframe.latest_keyframe;
+								while(temp) {
+									cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+									janus_recorder_save_frame(mountpoint->trc[0]->r, pkt->data, pkt->length);
+									temp = temp->next;
+								}
+								mountpoint->trc[0]->had_keyframe = TRUE;
 							}
+							janus_mutex_unlock(&source->keyframe.mutex);
 							cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
-						}
+							mountpoint->last_thumbnail = ml;
 					}
 				}
 
