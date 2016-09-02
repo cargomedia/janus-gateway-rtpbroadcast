@@ -331,6 +331,7 @@ typedef struct cm_rtpbcast_rtp_keyframe {
 typedef struct cm_rtpbcast_vp8_payload_dscr {
 	gboolean is_sbit;
 	gboolean is_xbit;
+	gboolean is_ibit;
 	gboolean is_mbit;
 	gboolean is_pbit;
 
@@ -2524,6 +2525,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 
 				is_video_keyframe = FALSE;
 				if (j == VIDEO) {
+					/* TODO: both payloads should be free on some point */
 					cm_rtpbcast_vp8_payload_dscr *vp8pay = NULL;
 					cm_rtpbcast_h264_payload_dscr *h264 = NULL;
 					if(source->codecs.codec[VIDEO] == CM_RTPBCAST_VP8) {
@@ -2556,23 +2558,23 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 						JANUS_LOG(LOG_HUGE, "[%s] ... ... last part of keyframe received! ts=%"SCNu32", %d packets\n",
 							mountpoint->name, source->keyframe.temp_ts, g_list_length(source->keyframe.temp_keyframe));
 
-						source->keyframe.temp_ts = 0;
-						janus_mutex_lock(&source->keyframe.mutex);
-						GList *temp = NULL;
-						while(source->keyframe.latest_keyframe) {
-							temp = g_list_first(source->keyframe.latest_keyframe);
-							source->keyframe.latest_keyframe = g_list_remove_link(source->keyframe.latest_keyframe, temp);
-							cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
-							g_free(pkt->data);
-							g_free(pkt);
-							g_list_free(temp);
-						}
 						if(cm_rtpbcast_vp8_is_frame_complete(source->keyframe.temp_keyframe)) {
-							source->keyframe.latest_keyframe = source->keyframe.temp_keyframe;
 							is_video_keyframe = TRUE;
+							source->keyframe.temp_ts = 0;
+							janus_mutex_lock(&source->keyframe.mutex);
+							GList *temp = NULL;
+							while(source->keyframe.latest_keyframe) {
+								temp = g_list_first(source->keyframe.latest_keyframe);
+								source->keyframe.latest_keyframe = g_list_remove_link(source->keyframe.latest_keyframe, temp);
+								cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+								g_free(pkt->data);
+								g_free(pkt);
+								g_list_free(temp);
+							}
+							source->keyframe.latest_keyframe = source->keyframe.temp_keyframe;
+							source->keyframe.temp_keyframe = NULL;
+							janus_mutex_unlock(&source->keyframe.mutex);
 						}
-						source->keyframe.temp_keyframe = NULL;
-						janus_mutex_unlock(&source->keyframe.mutex);
 
 						if (source->frame_key_overdue) {
 							JANUS_LOG(LOG_ERR, "[%s] Key frame arriveed %u frames late on source %d\n", name,
@@ -3612,11 +3614,13 @@ cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int le
 	/* Parse VP8 header now */
 	uint8_t vp8pd = *buffer;
 	uint8_t xbit = (vp8pd & 0x80);
+	uint8_t mbit = (vp8pd & 0x80);
 	uint8_t sbit = (vp8pd & 0x10);
 
 	cm_rtpbcast_vp8_payload_dscr *vp8pay = g_malloc0(sizeof(cm_rtpbcast_vp8_payload_dscr));
 	vp8pay->is_xbit = FALSE;
 	vp8pay->is_sbit = FALSE;
+	vp8pay->is_ibit = FALSE;
 	vp8pay->is_pbit = FALSE;
 	vp8pay->is_mbit = FALSE;
 	vp8pay->is_keyframe = FALSE;
@@ -3636,6 +3640,7 @@ cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int le
 		uint8_t tbit = (vp8pd & 0x20);
 		uint8_t kbit = (vp8pd & 0x10);
 		if(ibit) {
+			vp8pay->is_ibit = TRUE;
 			JANUS_LOG(LOG_HUGE, "  -- I bit is set!\n");
 			/* Read the PictureID octet */
 			buffer++;
@@ -3700,17 +3705,41 @@ cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int le
 	return vp8pay;
 }
 
-static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
+gint cm_rtpbcast_rtp_relay_packet_seq_sort_function (gconstpointer a, gconstpointer b) {
+    cm_rtpbcast_rtp_relay_packet * packet_a = (cm_rtpbcast_rtp_relay_packet *) a;
+    cm_rtpbcast_rtp_relay_packet * packet_b = (cm_rtpbcast_rtp_relay_packet *) b;
 
-	// https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1
-	/*
-		1. Sort by sequence number
-		2. Check if no missing packets
-		3. Check if first packets has S bit set
-		4. Check if last packet has M bit set
-		5. Check if all packets have the same timestamp
-	*/
-	return TRUE;
+    return (gint)packet_a->seq_number - (gint)packet_b->seq_number;
+}
+
+static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
+	/* Algorithm descriptino https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1 */
+	if(packets != NULL) {
+		/* Sort by sequence number */
+		g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
+		/* Get first and last element of the list */
+		GList *first_p = g_list_first(packets);
+		GList *last_p = g_list_last(packets);
+		/* Get RTP packets */
+		cm_rtpbcast_rtp_relay_packet *first_relay_p = (cm_rtpbcast_rtp_relay_packet *)first_p->data;
+		cm_rtpbcast_rtp_relay_packet *last_relay_p = (cm_rtpbcast_rtp_relay_packet *)last_p->data;
+		if(first_relay_p != NULL && last_relay_p != NULL) {
+			int computed_packet_count = last_relay_p->seq_number - first_relay_p->seq_number + 1;
+			if(computed_packet_count == g_list_length(packets)) {
+				/* Get VP8 payload from RTP packets */
+				cm_rtpbcast_vp8_payload_dscr *first_vp8pay = cm_rtpbcast_vp8_parse_payload(first_relay_p->data, first_relay_p->length);
+				cm_rtpbcast_vp8_payload_dscr *last_vp8pay = cm_rtpbcast_vp8_parse_payload(last_relay_p->data, last_relay_p->length);
+				if(first_vp8pay != NULL && last_vp8pay != NULL) {
+					if(first_vp8pay->is_sbit && last_relay_p->data->markerbit) {
+						/* This is valid multi-packet frame */
+						return TRUE;
+					}
+				}
+			}
+		}
+	}
+	/* Frame is invalid */
+	return FALSE;
 }
 
 cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int len) {
