@@ -3721,7 +3721,7 @@ gint cm_rtpbcast_rtp_relay_packet_seq_sort_function (gconstpointer a, gconstpoin
 }
 
 static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
-	/* Algorithm descriptino https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1 */
+	/* Algorithm description https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1 */
 	if(packets != NULL) {
 		/* Sort by sequence number */
 		g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
