@@ -1045,9 +1045,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	/* If session is watching something, remove it from listeners */
 	/* TODO: abstract "attach to source" and "remove from source" with a special func
 	 * also see below at cm_rtpbcast_stop_udp_relays() for example */
-
 	janus_mutex_lock(&session->mutex);
-
 	if(session->source) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
@@ -1060,9 +1058,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
-
 	janus_mutex_unlock(&session->mutex);
-
 	janus_mutex_lock(&sessions_mutex);
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
