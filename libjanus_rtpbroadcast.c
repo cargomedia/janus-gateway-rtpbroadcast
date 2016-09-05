@@ -1045,6 +1045,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	/* If session is watching something, remove it from listeners */
 	/* TODO: abstract "attach to source" and "remove from source" with a special func
 	 * also see below at cm_rtpbcast_stop_udp_relays() for example */
+	janus_mutex_lock(&session->mutex);
 	if(session->source) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
@@ -1057,7 +1058,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
-
+	janus_mutex_unlock(&session->mutex);
 	janus_mutex_lock(&sessions_mutex);
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
@@ -3365,39 +3366,45 @@ void cm_rtpbcast_unschedule_switch(cm_rtpbcast_session *sessid) {
 static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 	cm_rtpbcast_session *sessid = (cm_rtpbcast_session *)data;
 	cm_rtpbcast_rtp_source *source = (cm_rtpbcast_rtp_source *)user_data;
-	cm_rtpbcast_rtp_source *oldsrc = sessid->source;
+
+	if(sessid == NULL)
+		return;
 
 	janus_mutex_lock(&sessid->mutex);
+	cm_rtpbcast_rtp_source *oldsrc = sessid->source;
 
+	if(oldsrc == NULL) {
+		janus_mutex_unlock(&sessid->mutex);
+		return;
+	}
+
+	janus_mutex_lock(&oldsrc->mutex);
 	/* If somehow the sources are the same, prevent a deadlock */
-	if (source != oldsrc)
-		janus_mutex_lock(&oldsrc->mutex);
+	if (source != oldsrc) {
+		/* Remove from old source and attach to new source */
+		oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
+		source->listeners = g_list_prepend(source->listeners, sessid);
+		sessid->source = source;
 
-	/* Remove from old source and attach to new source */
-	oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
-	source->listeners = g_list_prepend(source->listeners, sessid);
-	sessid->source = source;
-	JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
+		JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
 
-	if (source != oldsrc)
-		janus_mutex_unlock(&oldsrc->mutex);
+		json_t *event = json_object();
+		json_object_set_new(event, "streaming", json_string("event"));
 
+		json_t *result = json_object();
+		json_object_set_new(result, "event", json_string("changed"));
+
+		json_t *streams = cm_rtpbcast_sources_to_json(source->mp->sources, sessid);
+		json_object_set_new(result, "streams", streams);
+
+		json_object_set_new(event, "result", result);
+		char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
+		json_decref(event);
+
+		gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+	}
+	janus_mutex_unlock(&oldsrc->mutex);
 	janus_mutex_unlock(&sessid->mutex);
-
-	json_t *event = json_object();
-	json_object_set_new(event, "streaming", json_string("event"));
-	json_t *result = json_object();
-
-	json_object_set_new(result, "event", json_string("changed"));
-
-	json_t *streams = cm_rtpbcast_sources_to_json(source->mp->sources, sessid);
-	json_object_set_new(result, "streams", streams);
-
-	json_object_set_new(event, "result", result);
-	char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
-	json_decref(event);
-
-	gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
 }
 
 void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
