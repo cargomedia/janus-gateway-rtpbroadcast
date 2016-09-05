@@ -3467,9 +3467,9 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		return;
 	}
 
-	janus_mutex_lock(&oldsrc->mutex);
 	/* If somehow the sources are the same, prevent a deadlock */
 	if (source != oldsrc) {
+		janus_mutex_lock(&oldsrc->mutex);
 		/* Remove from old source and attach to new source */
 		oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 		source->listeners = g_list_prepend(source->listeners, sessid);
@@ -3491,8 +3491,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		json_decref(event);
 
 		gateway->push_event(sessid->handle, &cm_rtpbcast_plugin, NULL, event_text, NULL, NULL);
+		janus_mutex_unlock(&oldsrc->mutex);
 	}
-	janus_mutex_unlock(&oldsrc->mutex);
 	janus_mutex_unlock(&sessid->mutex);
 }
 
