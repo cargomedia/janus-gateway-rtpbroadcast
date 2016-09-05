@@ -464,6 +464,8 @@ static GHashTable *sessions;
 static GList *old_sessions;
 static GList *super_sessions;
 static janus_mutex sessions_mutex;
+static janus_mutex old_sessions_mutex;
+static janus_mutex super_sessions_mutex;
 static void cm_rtpbcast_store_event(json_t* , const char *);
 static void cm_rtpbcast_notify_supers(json_t*);
 static void cm_rtpbcast_notify_session(gpointer, gpointer);
@@ -637,6 +639,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 	gint64 session_update = 0;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
 		janus_mutex_lock(&sessions_mutex);
+		janus_mutex_lock(&old_sessions_mutex);
 		/* Iterate on all the sessions */
 		now = janus_get_monotonic_time();
 		if(old_sessions != NULL) {
@@ -697,6 +700,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 		}
 
 		janus_mutex_unlock(&sessions_mutex);
+		janus_mutex_unlock(&old_sessions_mutex);
 		janus_mutex_lock(&mountpoints_mutex);
 		/* Iterate on all the mountpoints */
 		if(old_mountpoints != NULL) {
@@ -874,7 +878,10 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
 	super_sessions = NULL;
+	old_sessions = NULL;
 	janus_mutex_init(&sessions_mutex);
+	janus_mutex_init(&old_sessions_mutex);
+	janus_mutex_init(&super_sessions_mutex);
 	messages = g_async_queue_new_full((GDestroyNotify) cm_rtpbcast_message_free);
 	/* This is the callback we'll need to invoke to contact the gateway */
 	gateway = callback;
@@ -1035,17 +1042,24 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		*error = -1;
 		return;
 	}
+
+	if(!handle)
+		return;
+
+	if(handle->plugin_handle)
+		return;
+
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)handle->plugin_handle;
 	if(!session) {
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
 		*error = -2;
 		return;
 	}
+	janus_mutex_lock(&session->mutex);
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
 	/* If session is watching something, remove it from listeners */
 	/* TODO: abstract "attach to source" and "remove from source" with a special func
 	 * also see below at cm_rtpbcast_stop_udp_relays() for example */
-	janus_mutex_lock(&session->mutex);
 	if(session->source) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
@@ -1054,12 +1068,19 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 
+	int i;
+	for(i=0;i<100000000;i++) {
+		if(session) {}
+	}
+
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
 	janus_mutex_unlock(&session->mutex);
 	janus_mutex_lock(&sessions_mutex);
+	janus_mutex_lock(&old_sessions_mutex);
+	janus_mutex_lock(&super_sessions_mutex);
 	if(!session->destroyed) {
 		session->destroyed = janus_get_monotonic_time();
 		g_hash_table_remove(sessions, handle);
@@ -1067,7 +1088,10 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		/* Cleaning up and removing the session is done in a lazy way */
 		old_sessions = g_list_append(old_sessions, session);
 	}
+	janus_mutex_unlock(&super_sessions_mutex);
+	janus_mutex_unlock(&old_sessions_mutex);
 	janus_mutex_unlock(&sessions_mutex);
+	janus_mutex_unlock(&session->mutex);
 	return;
 }
 
@@ -1177,11 +1201,13 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 		gboolean su = json_is_true(value);
 
 		if (session->super_user != su) {
+			janus_mutex_lock(&super_sessions_mutex);
 			if (su) {
 				super_sessions = g_list_prepend(super_sessions, session);
 			} else {
 				super_sessions = g_list_remove_all(super_sessions, session);
 			}
+			janus_mutex_unlock(&super_sessions_mutex);
 			session->super_user = su;
 		}
 
@@ -2687,11 +2713,18 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		return;
 	}
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)data;
-	if(!session || !session->handle) {
+	if(!session) {
+		//~ JANUS_LOG(LOG_ERR, "Invalid session...\n");
+		return;
+	}
+	janus_mutex_lock(&session->mutex);
+	if(!session->handle) {
+		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Invalid session...\n");
 		return;
 	}
 	if(!session->started || session->paused) {
+		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
 	}
@@ -2714,6 +2747,11 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	packet->data->timestamp = htonl(session->context.last_ts[j]);
 	packet->data->seq_number = htons(session->context.last_seq[j]);
 
+	int i;
+	for(i=0; i< 100000000; i++) {
+		if(session->source) {}
+	}
+
 	if (session->source) {
 		if(gateway != NULL) {
 			gateway->relay_rtp(session->handle, packet->is_video, (char *)packet->data, packet->length);
@@ -2723,6 +2761,8 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	if (session->relay_udp_gateways) {
 		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->source_index, packet->is_video, (char *)packet->data, packet->length);
 	}
+
+	janus_mutex_unlock(&session->mutex);
 
 	/* Restore the timestamp and sequence number to what the publisher set them to */
 	packet->data->timestamp = htonl(packet->timestamp);
@@ -3277,7 +3317,9 @@ void cm_rtpbcast_notify_supers(json_t* response) {
 	if(!response)
 		return;
 
+	janus_mutex_lock(&super_sessions_mutex);
 	g_list_foreach(super_sessions, cm_rtpbcast_notify_session, response);
+	janus_mutex_unlock(&super_sessions_mutex);
 }
 
 void cm_rtpbcast_notify_session(gpointer data, gpointer user_data) {
@@ -3384,7 +3426,11 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		/* Remove from old source and attach to new source */
 		oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 		source->listeners = g_list_prepend(source->listeners, sessid);
-		sessid->source = source;
+
+		int i;
+		for(i=0; i< 100000000; i++) {
+			sessid->source = source;
+		}
 
 		JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
 
@@ -3408,15 +3454,18 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 }
 
 void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
+	if(!src)
+		return;
+
+	janus_mutex_lock(&src->mutex);
 	if (src->waiters) {
-		janus_mutex_lock(&src->mutex);
 		/* Switch everybody */
 		g_list_foreach(src->waiters, cm_rtpbcast_execute_switching, src);
 		/* Kill everybody */
 		g_list_free(src->waiters);
 		src->waiters = NULL;
-		janus_mutex_unlock(&src->mutex);
 	}
+	janus_mutex_unlock(&src->mutex);
 }
 
 json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session) {
