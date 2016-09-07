@@ -1065,11 +1065,13 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
+		session->source = NULL;
 	}
 	if(session->nextsource) {
 		janus_mutex_lock(&session->nextsource->mutex);
 		session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
 		janus_mutex_unlock(&session->nextsource->mutex);
+		session->nextsource = NULL;
 	}
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
@@ -2728,7 +2730,7 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
 	}
-	if(session->destroyed) {
+	if(session->destroyed > 0) {
 		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Streaming finished, session destroyed...\n");
 		return;
@@ -3423,6 +3425,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		/* Remove from old source and attach to new source */
 		oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 		source->listeners = g_list_prepend(source->listeners, sessid);
+		sessid->source = source;
+
 		JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
 
 		json_t *event = json_object();
