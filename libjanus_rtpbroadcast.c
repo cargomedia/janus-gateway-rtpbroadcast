@@ -1065,14 +1065,14 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		janus_mutex_lock(&session->source->mutex);
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
-		session->source = NULL;
 	}
 	if(session->nextsource) {
 		janus_mutex_lock(&session->nextsource->mutex);
 		session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
 		janus_mutex_unlock(&session->nextsource->mutex);
-		session->nextsource = NULL;
 	}
+	session->source = NULL;
+	session->nextsource = NULL;
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 	/* If this is a streamer session, kill the stream */
@@ -2102,7 +2102,13 @@ static void *cm_rtpbcast_handler(void *data) {
 				session->source->listeners = g_list_remove_all(session->source->listeners, session);
 				janus_mutex_unlock(&session->source->mutex);
 			}
+			if(session->nextsource) {
+				janus_mutex_lock(&session->nextsource->mutex);
+				session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
+				janus_mutex_unlock(&session->nextsource->mutex);
+			}
 			session->source = NULL;
+			session->nextsource = NULL;
 			/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
 			gateway->close_pc(session->handle);
 		} else {
