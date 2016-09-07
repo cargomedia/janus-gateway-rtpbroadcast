@@ -1065,6 +1065,11 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+	if(session->nextsource) {
+		janus_mutex_lock(&session->nextsource->mutex);
+		session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
+		janus_mutex_unlock(&session->nextsource->mutex);
+	}
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 	/* If this is a streamer session, kill the stream */
@@ -2720,6 +2725,11 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	if(!session->started || session->paused) {
 		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
+		return;
+	}
+	if(session->destroyed) {
+		janus_mutex_unlock(&session->mutex);
+		//~ JANUS_LOG(LOG_ERR, "Streaming not started, session destoryed...\n");
 		return;
 	}
 
