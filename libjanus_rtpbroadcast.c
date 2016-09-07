@@ -1056,6 +1056,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		return;
 	}
 	janus_mutex_lock(&session->mutex);
+	session->stopping = TRUE;
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
 	/* If session is watching something, remove it from listeners */
 	/* TODO: abstract "attach to source" and "remove from source" with a special func
@@ -2722,7 +2723,7 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		//~ JANUS_LOG(LOG_ERR, "Invalid session handle...\n");
 		return;
 	}
-	if(!session->started || session->paused) {
+	if(!session->started || session->stopping || session->paused) {
 		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
