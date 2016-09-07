@@ -1046,7 +1046,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(!handle)
 		return;
 
-	if(handle->plugin_handle)
+	if(!handle->plugin_handle)
 		return;
 
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)handle->plugin_handle;
@@ -1056,6 +1056,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		return;
 	}
 	janus_mutex_lock(&session->mutex);
+	session->stopping = TRUE;
 	JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
 	/* If session is watching something, remove it from listeners */
 	/* TODO: abstract "attach to source" and "remove from source" with a special func
@@ -1065,6 +1066,13 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		session->source->listeners = g_list_remove_all(session->source->listeners, session);
 		janus_mutex_unlock(&session->source->mutex);
 	}
+	if(session->nextsource) {
+		janus_mutex_lock(&session->nextsource->mutex);
+		session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
+		janus_mutex_unlock(&session->nextsource->mutex);
+	}
+	session->source = NULL;
+	session->nextsource = NULL;
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 	/* If this is a streamer session, kill the stream */
@@ -2094,7 +2102,13 @@ static void *cm_rtpbcast_handler(void *data) {
 				session->source->listeners = g_list_remove_all(session->source->listeners, session);
 				janus_mutex_unlock(&session->source->mutex);
 			}
+			if(session->nextsource) {
+				janus_mutex_lock(&session->nextsource->mutex);
+				session->nextsource->waiters = g_list_remove_all(session->nextsource->waiters, session);
+				janus_mutex_unlock(&session->nextsource->mutex);
+			}
 			session->source = NULL;
+			session->nextsource = NULL;
 			/* Tell the core to tear down the PeerConnection, hangup_media will do the rest */
 			gateway->close_pc(session->handle);
 		} else {
@@ -2717,9 +2731,14 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		//~ JANUS_LOG(LOG_ERR, "Invalid session handle...\n");
 		return;
 	}
-	if(!session->started || session->paused) {
+	if(!session->started || session->stopping || session->paused) {
 		janus_mutex_unlock(&session->mutex);
 		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
+		return;
+	}
+	if(session->destroyed > 0) {
+		janus_mutex_unlock(&session->mutex);
+		//~ JANUS_LOG(LOG_ERR, "Streaming finished, session destroyed...\n");
 		return;
 	}
 
@@ -3412,6 +3431,8 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 		/* Remove from old source and attach to new source */
 		oldsrc->listeners = g_list_remove_all(oldsrc->listeners, sessid);
 		source->listeners = g_list_prepend(source->listeners, sessid);
+		sessid->source = source;
+
 		JANUS_LOG(LOG_VERB, "Session 0x%x switched to source 0x%x\n", GPOINTER_TO_UINT(sessid), GPOINTER_TO_UINT(source));
 
 		json_t *event = json_object();
