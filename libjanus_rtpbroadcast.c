@@ -1046,7 +1046,7 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	if(!handle)
 		return;
 
-	if(handle->plugin_handle)
+	if(!handle->plugin_handle)
 		return;
 
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)handle->plugin_handle;
