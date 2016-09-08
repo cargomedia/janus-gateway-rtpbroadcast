@@ -2693,16 +2693,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					janus_mutex_unlock(&source->mutex);
 					if(waiters) {
 						cm_rtpbcast_process_switchers(source);
+						janus_mutex_lock(&source->mutex);
 						janus_mutex_lock(&source->keyframe.mutex);
 						if(source->keyframe.latest_keyframe != NULL && g_list_length(waiters)) {
 							GList *temp = source->keyframe.latest_keyframe;
 							while(temp) {
-								JANUS_LOG(LOG_INFO, "[%s] switching waiters, sending keyframe\n", name);
+								JANUS_LOG(LOG_VERB, "[%s] switching waiters, sending keyframe\n", name);
 								g_list_foreach(waiters, cm_rtpbcast_relay_rtp_packet, temp->data);
 								temp = temp->next;
 							}
 						}
 						janus_mutex_unlock(&source->keyframe.mutex);
+						janus_mutex_unlock(&source->mutex);
 					}
 					g_list_free(waiters);
 				}
@@ -3421,15 +3423,15 @@ void cm_rtpbcast_schedule_switch(cm_rtpbcast_session *sessid, cm_rtpbcast_rtp_so
 	if (ns) {
 		janus_mutex_lock(&ns->mutex);
 		ns->waiters = g_list_remove_all(ns->waiters, sessid);
-		sessid->nextsource = NULL;
 		janus_mutex_unlock(&ns->mutex);
+		sessid->nextsource = NULL;
 	}
 
 	/* Attaching to a new source */
-	sessid->nextsource = newsrc;
 	janus_mutex_lock(&newsrc->mutex);
 	newsrc->waiters = g_list_prepend(newsrc->waiters, sessid);
 	janus_mutex_unlock(&newsrc->mutex);
+	sessid->nextsource = newsrc;
 
 	janus_mutex_unlock(&sessid->mutex);
 }
