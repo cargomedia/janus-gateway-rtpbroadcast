@@ -358,6 +358,9 @@ typedef struct cm_rtpbcast_rtp_source {
 	cm_rtpbcast_stats stats[AV];
 	cm_rtpbcast_mountpoint *mp;
 
+	gboolean enabled;
+	gint64 destroyed;
+
 	int index;
 
 	int frame_width;
@@ -916,7 +919,7 @@ void cm_rtpbcast_destroy(void) {
 	}
 
 	/* Remove all mountpoints */
-	janus_mutex_unlock(&mountpoints_mutex);
+	janus_mutex_lock(&mountpoints_mutex);
 	GHashTableIter iter;
 	gpointer value;
 	g_hash_table_iter_init(&iter, mountpoints);
@@ -1033,11 +1036,13 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 
 	if(!handle) {
 		JANUS_LOG(LOG_ERR, "No handle associated with janus plugin session...\n");
+		*error = -2;
 		return;
 	}
 
 	if(!handle->plugin_handle) {
 		JANUS_LOG(LOG_ERR, "No plugin handle associated with janus plugin session/handle...\n");
+		*error = -2;
 		return;
 	}
 
@@ -1459,9 +1464,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 			goto error;
 		}
-		JANUS_LOG(LOG_VERB, "Request to unmount mountpoint/stream %s\n", id_value);
-		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		janus_mutex_unlock(&mountpoints_mutex);
+		JANUS_LOG(LOG_INFO, "Request to unmount mountpoint/stream %s\n", id_value);
+		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("destroyed"));
@@ -2318,6 +2323,8 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 			goto error;
 		}
 
+		live_rtp_source->enabled = TRUE;
+		live_rtp_source->destroyed = 0;
 		live_rtp_source->mp = live_rtp;
 		live_rtp_source->index = i+1;
 		live_rtp_source->frame_width = 0;
@@ -2463,7 +2470,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	cm_rtpbcast_stats_restart(&source->stats[0]);
 	cm_rtpbcast_stats_restart(&source->stats[1]);
 
-	while(!g_atomic_int_get(&stopping) && !mountpoint->destroyed) {
+	while(!g_atomic_int_get(&stopping) && !mountpoint->destroyed && !source->destroyed) {
 		/* Wait for some data */
 		for (j = AUDIO; j <= VIDEO; j++) {
 			fds[j].fd = 0;
@@ -2525,6 +2532,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				/* If paused, ignore this packet */
 				if(!mountpoint->enabled)
 					continue;
+
 				rtp_header *rtp = (rtp_header *)buffer;
 				//~ JANUS_LOG(LOG_VERB, " ... parsed RTP packet (ssrc=%u, pt=%u, seq=%u, ts=%u)...\n",
 					//~ ntohl(rtp->ssrc), rtp->type, ntohs(rtp->seq_number), ntohl(rtp->timestamp));
@@ -2573,25 +2581,27 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					cm_rtpbcast_h264_payload_dscr *h264 = NULL;
 					if(source->codecs.codec[VIDEO] == CM_RTPBCAST_VP8) {
 						vp8pay = cm_rtpbcast_vp8_parse_payload(buffer, bytes);
-						if(vp8pay->is_sbit) {
-							guint64 ml = janus_get_monotonic_time();
-							/* Calculate frame rate (FPS) in the stream */
-							if (ml - source->frame_last_usec >= STAT_SECOND) {
-								source->frame_rate = source->frame_count - source->frame_last_count;
-								source->frame_last_count = source->frame_count;
-								/* Keep timestamp for last FPS update */
-								source->frame_last_usec = ml;
+						if(vp8pay) {
+							if(vp8pay->is_sbit) {
+								guint64 ml = janus_get_monotonic_time();
+								/* Calculate frame rate (FPS) in the stream */
+								if (ml - source->frame_last_usec >= STAT_SECOND) {
+									source->frame_rate = source->frame_count - source->frame_last_count;
+									source->frame_last_count = source->frame_count;
+									/* Keep timestamp for last FPS update */
+									source->frame_last_usec = ml;
+								}
+								source->frame_count++;
 							}
-							source->frame_count++;
-						}
-						if(vp8pay->is_keyframe) {
-							source->frame_width = vp8pay->width;
-							source->frame_height = vp8pay->height;
-							source->frame_x_scale = vp8pay->width_scale;
-							source->frame_y_scale = vp8pay->height_scale;
-							/* Calculate key frame distance in the stream */
-							source->frame_key_distance = source->frame_count - source->frame_key_last;
-							source->frame_key_last = source->frame_count;
+							if(vp8pay->is_keyframe) {
+								source->frame_width = vp8pay->width;
+								source->frame_height = vp8pay->height;
+								source->frame_x_scale = vp8pay->width_scale;
+								source->frame_y_scale = vp8pay->height_scale;
+								/* Calculate key frame distance in the stream */
+								source->frame_key_distance = source->frame_count - source->frame_key_last;
+								source->frame_key_last = source->frame_count;
+							}
 						}
 					} else if (source->codecs.codec[VIDEO] == CM_RTPBCAST_H264) {
 						h264 = cm_rtpbcast_h264_parse_payload(buffer, bytes);
@@ -2685,20 +2695,20 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					/* Is it time to do thumbnailing? */
 					guint64 ml = janus_get_monotonic_time();
 					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
-							cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Source at index 0 will be recorded */
-							janus_mutex_lock(&source->keyframe.mutex);
-							if(source->keyframe.latest_keyframe != NULL) {
-								GList *temp = source->keyframe.latest_keyframe;
-								while(temp) {
-									cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
-									janus_recorder_save_frame(mountpoint->trc[0]->r, pkt->data, pkt->length);
-									temp = temp->next;
-								}
-								mountpoint->trc[0]->had_keyframe = TRUE;
+						cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Source at index 0 will be recorded */
+						janus_mutex_lock(&source->keyframe.mutex);
+						if(source->keyframe.latest_keyframe != NULL) {
+							GList *temp = source->keyframe.latest_keyframe;
+							while(temp) {
+								cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
+								janus_recorder_save_frame(mountpoint->trc[0]->r, pkt->data, pkt->length);
+								temp = temp->next;
 							}
-							janus_mutex_unlock(&source->keyframe.mutex);
-							cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
-							mountpoint->last_thumbnail = ml;
+							mountpoint->trc[0]->had_keyframe = TRUE;
+						}
+						janus_mutex_unlock(&source->keyframe.mutex);
+						cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
+						mountpoint->last_thumbnail = ml;
 					}
 				}
 
@@ -3307,15 +3317,19 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 
 void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
+	JANUS_LOG(LOG_INFO, "destroy, -1\n");
 	if(!mp->destroyed) {
 		/* FIXME Should we kick the current viewers as well? */
 		guint i;
+		JANUS_LOG(LOG_INFO, "destroy, 0\n");
 		for (i = 0; i < mp->sources->len; i++) {
 			cm_rtpbcast_rtp_source *src = g_array_index(mp->sources,
 				cm_rtpbcast_rtp_source *, i);
 
 			janus_mutex_lock(&src->mutex);
+			JANUS_LOG(LOG_INFO, "destroy, 1\n");
 			GList *viewer = g_list_first(src->listeners);
+			JANUS_LOG(LOG_INFO, "destroy, 2\n");
 			/* Prepare JSON event */
 			json_t *event = json_object();
 			json_object_set_new(event, "streaming", json_string("event"));
@@ -3325,6 +3339,7 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 			char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
 			json_decref(event);
 			while(viewer) {
+				JANUS_LOG(LOG_INFO, "destroy, 3\n");
 				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
 				/* TODO: why don't we have a per-session mutex? */
 				if(session != NULL) {
@@ -3347,6 +3362,7 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 				viewer = g_list_first(src->listeners);
 			}
 			g_free(event_text);
+			src->destroyed = janus_get_monotonic_time();
 			janus_mutex_unlock(&src->mutex);
 		}
 
@@ -3365,7 +3381,9 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
 		mp->destroyed = janus_get_monotonic_time();
+		janus_mutex_lock(&mountpoints_mutex);
 		g_hash_table_remove(mountpoints, mp->id);
+		janus_mutex_unlock(&mountpoints_mutex);
 		/* Cleaning up and removing the mountpoint is done in a lazy way */
 		old_mountpoints = g_list_append(old_mountpoints, mp);
 	}
@@ -3527,7 +3545,7 @@ void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
 
 json_t *cm_rtpbcast_mountpoints_to_json(cm_rtpbcast_session *session) {
 	json_t *mps = json_array();
-	janus_mutex_unlock(&mountpoints_mutex);
+	janus_mutex_lock(&mountpoints_mutex);
 	GHashTableIter iter;
 	gpointer value;
 	g_hash_table_iter_init(&iter, mountpoints);
