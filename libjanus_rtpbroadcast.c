@@ -2805,7 +2805,7 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 	}
 	if(!packet->is_keyframe && (!session->started || session->stopping || session->paused)) {
 		janus_mutex_unlock(&session->mutex);
-		//~ JANUS_LOG(LOG_INFO, "SKIPPED: Streaming not started yet for this session...\n");
+		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
 	}
 	if(session->destroyed > 0) {
