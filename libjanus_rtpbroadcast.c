@@ -1027,6 +1027,17 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		*error = -1;
 		return;
 	}
+
+	if(!handle) {
+		JANUS_LOG(LOG_ERR, "No handle associated with janus plugin session...\n");
+		return;
+	}
+
+	if(!handle->plugin_handle) {
+		JANUS_LOG(LOG_ERR, "No plugin handle associated with janus plugin session/handle...\n");
+		return;
+	}
+
 	cm_rtpbcast_session *session = (cm_rtpbcast_session *)handle->plugin_handle;
 	if(!session) {
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
@@ -2498,6 +2509,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				packet.data = rtp;
 				packet.length = bytes;
 				packet.is_video = (j == VIDEO);
+				packet.is_keyframe = 0;
 				/* Do we have a new stream? */
 				if(ntohl(packet.data->ssrc) != ctx.last_ssrc[j]) {
 					ctx.last_ssrc[j] = ntohl(packet.data->ssrc);
@@ -2683,17 +2695,19 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				if(is_video_keyframe) {
 					JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
 					GList *waiters = g_list_copy (source->waiters);
-					cm_rtpbcast_process_switchers(source);
-					janus_mutex_lock(&source->keyframe.mutex);
-					if(source->keyframe.latest_keyframe != NULL) {
-						JANUS_LOG(LOG_HUGE, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
-						GList *temp = source->keyframe.latest_keyframe;
-						while(temp) {
-							g_list_foreach(waiters, cm_rtpbcast_relay_rtp_packet, temp->data);
-							temp = temp->next;
+					if(waiters) {
+						cm_rtpbcast_process_switchers(source);
+						janus_mutex_lock(&source->keyframe.mutex);
+						if(source->keyframe.latest_keyframe != NULL && g_list_length(waiters)) {
+							GList *temp = source->keyframe.latest_keyframe;
+							while(temp) {
+								JANUS_LOG(LOG_INFO, "[%s] switching waiters, sending keyframe\n", name);
+								g_list_foreach(waiters, cm_rtpbcast_relay_rtp_packet, temp->data);
+								temp = temp->next;
+							}
 						}
+						janus_mutex_unlock(&source->keyframe.mutex);
 					}
-					janus_mutex_unlock(&source->keyframe.mutex);
 					g_list_free(waiters);
 				}
 
@@ -2757,8 +2771,15 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		//~ JANUS_LOG(LOG_ERR, "Invalid session...\n");
 		return;
 	}
-	if(!packet->is_keyframe && (!session->started || session->paused)) {
-		//~ JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
+	janus_mutex_lock(&session->mutex);
+	if(!session->handle) {
+		janus_mutex_unlock(&session->mutex);
+		//~ JANUS_LOG(LOG_ERR, "Invalid session handle...\n");
+		return;
+	}
+	if(!packet->is_keyframe && (!session->started || session->stopping || session->paused)) {
+		janus_mutex_unlock(&session->mutex);
+		//~ JANUS_LOG(LOG_INFO, "SKIPPED: Streaming not started yet for this session...\n");
 		return;
 	}
 
