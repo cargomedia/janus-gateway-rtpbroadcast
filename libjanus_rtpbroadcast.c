@@ -3287,19 +3287,15 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 
 void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
-	JANUS_LOG(LOG_INFO, "destroy, -1\n");
 	if(!mp->destroyed) {
 		/* FIXME Should we kick the current viewers as well? */
 		guint i;
-		JANUS_LOG(LOG_INFO, "destroy, 0\n");
 		for (i = 0; i < mp->sources->len; i++) {
 			cm_rtpbcast_rtp_source *src = g_array_index(mp->sources,
 				cm_rtpbcast_rtp_source *, i);
 
 			janus_mutex_lock(&src->mutex);
-			JANUS_LOG(LOG_INFO, "destroy, 1\n");
 			GList *viewer = g_list_first(src->listeners);
-			JANUS_LOG(LOG_INFO, "destroy, 2\n");
 			/* Prepare JSON event */
 			json_t *event = json_object();
 			json_object_set_new(event, "streaming", json_string("event"));
@@ -3309,7 +3305,6 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 			char *event_text = json_dumps(event, JSON_INDENT(3) | JSON_PRESERVE_ORDER);
 			json_decref(event);
 			while(viewer) {
-				JANUS_LOG(LOG_INFO, "destroy, 3\n");
 				cm_rtpbcast_session *session = (cm_rtpbcast_session *)viewer->data;
 				/* TODO: why don't we have a per-session mutex? */
 				if(session != NULL) {
