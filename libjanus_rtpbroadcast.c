@@ -2715,7 +2715,9 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				/* Update all waiting sessions with new keyframe packets and upgrade them to listeners list */
 				if(is_video_keyframe) {
 					JANUS_LOG(LOG_HUGE, "[%s] Key frame on source %d\n", name, source->index);
+					janus_mutex_lock(&source->mutex);
 					GList *waiters = g_list_copy (source->waiters);
+					janus_mutex_unlock(&source->mutex);
 					if(waiters) {
 						cm_rtpbcast_process_switchers(source);
 						janus_mutex_lock(&source->keyframe.mutex);
