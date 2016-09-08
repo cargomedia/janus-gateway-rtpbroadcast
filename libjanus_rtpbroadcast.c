@@ -2668,9 +2668,9 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					/* Is it time to do thumbnailing? */
 					guint64 ml = janus_get_monotonic_time();
 					if (!mountpoint->trc[0] && (ml > mountpoint->last_thumbnail + cm_rtpbcast_settings.thumbnailing_interval * 1000000)) {
-						cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Source at index 0 will be recorded */
 						janus_mutex_lock(&source->keyframe.mutex);
 						if(source->keyframe.latest_keyframe != NULL) {
+							cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Keyframe of source at index 0 will be stored */
 							GList *temp = source->keyframe.latest_keyframe;
 							while(temp) {
 								cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
@@ -2678,9 +2678,9 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 								temp = temp->next;
 							}
 							mountpoint->trc[0]->had_keyframe = TRUE;
+							cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
 						}
 						janus_mutex_unlock(&source->keyframe.mutex);
-						cm_rtpbcast_stop_thumbnailing(mountpoint, 0);
 						mountpoint->last_thumbnail = ml;
 					}
 				}
