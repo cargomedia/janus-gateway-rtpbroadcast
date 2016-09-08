@@ -1,6 +1,8 @@
 Vagrant.configure('2') do |config|
   config.vm.box = 'cargomedia/debian-7-amd64-default'
 
+  config.vm.network :private_network, ip: '10.10.10.111'
+
   config.vm.provision 'deps', type: 'shell', inline: [
      'cd /vagrant',
      'sudo apt-get update',
@@ -47,7 +49,7 @@ Vagrant.configure('2') do |config|
   config.vm.provision 'cm-plugin', type: 'shell', inline: [
     'cd /vagrant/',
     './autogen.sh',
-    './configure --prefix=/usr',
+    './configure --prefix=/usr CCFLAGS=-g3',
     'make && make install'
   ].join(' && ')
 end

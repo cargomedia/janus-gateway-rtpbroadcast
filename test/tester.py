@@ -3,10 +3,10 @@
 
 import requests, json, subprocess, time
 
-janus_http = '127.0.0.1'
+janus_http = '10.10.10.111'
 janus_url = "http://" + str(janus_http) + ":8088/janus"
 
-mountpoint_id = "Ababagalamaga"
+mountpoint_id = "Ababagalamaga" + range
 insttemplate = {
     "session_id" : None,
     "handle_id" : None,
@@ -124,15 +124,15 @@ def destroy(session=None):
                 endpoint = "/" + str(session["session_id"]) + "/" + str(session["handle_id"]))
 
 # Streaming bitrates
-videorate_min = 128000
-videorate_max = 512000
-audiorate_min = 16000
-audiorate_max = 64000
+videorate_min = 200000
+videorate_max = 2000000
+audiorate_min = 500000
+audiorate_max = 512000
 
 # Various parameters feel free to change in runtime
 pattern = "ball"
 fontsize = 100
-keyframedist = 30
+keyframedist = 25
 
 
 def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, amax = audiorate_max, session=None):
@@ -150,10 +150,10 @@ def stream(vmin = videorate_min, vmax = videorate_max, amin = audiorate_min, ama
             args+="    opusenc bitrate=" + str(arate) + " ! "
             args+="      rtpopuspay ! udpsink host=" + str(session["hosts"][i*2]) + " port=" + str(session["ports"][i*2]) + "  "
             args+="  videotestsrc pattern = '" + pattern + "' ! "
-            args+="    video/x-raw,width=640,height=480,framerate=30/1 ! "
+            args+="    video/x-raw,width=1280,height=720,framerate=5/1 ! "
             args+="    videoscale ! videorate ! videoconvert ! timeoverlay ! "
             args+="    textoverlay font-desc='sans, " + str(fontsize) + "' text='Quality " + str(i) + "' !"
-            args+="    vp8enc keyframe-max-dist=" + str(keyframedist) + " target-bitrate=" + str(vrate) + " ! "
+            args+="    vp8enc keyframe-max-dist=" + str(keyframedist*(i+1)) + " target-bitrate=" + str(vrate) + " ! "
             args+="      rtpvp8pay ! udpsink host=" + str(session["hosts"][i*2]) + " port=" + str(session["ports"][i*2 + 1]) + " "
         # args += ">/dev/null 2>&1"
         print("Running: " + args)
