@@ -2661,7 +2661,6 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							cm_rtpbcast_start_thumbnailing(mountpoint, 0); /* Source at index 0 will be recorded */
 							janus_mutex_lock(&source->keyframe.mutex);
 							if(source->keyframe.latest_keyframe != NULL) {
-								JANUS_LOG(LOG_HUGE, "Yep! %d packets\n", g_list_length(source->keyframe.latest_keyframe));
 								GList *temp = source->keyframe.latest_keyframe;
 								while(temp) {
 									cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
