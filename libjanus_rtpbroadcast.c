@@ -1079,13 +1079,13 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	}
 	session->source = NULL;
 	session->nextsource = NULL;
+	janus_mutex_unlock(&session->mutex);
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
-	janus_mutex_unlock(&session->mutex);
 	janus_mutex_lock(&sessions_mutex);
 	janus_mutex_lock(&old_sessions_mutex);
 	janus_mutex_lock(&super_sessions_mutex);
@@ -1099,7 +1099,6 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	janus_mutex_unlock(&super_sessions_mutex);
 	janus_mutex_unlock(&old_sessions_mutex);
 	janus_mutex_unlock(&sessions_mutex);
-	janus_mutex_unlock(&session->mutex);
 	return;
 }
 
@@ -1862,6 +1861,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			json_t *streams = json_object_get(root, "streams");
 			size_t nstreams = json_array_size(streams);
 			if (nstreams==0 || !json_is_array(streams)) {
+				janus_mutex_unlock(&mountpoints_mutex);
 				JANUS_LOG(LOG_ERR, "Invalid element (streams should be a non-empty array)\n");
 				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element (streams should be a non-empty array)");
