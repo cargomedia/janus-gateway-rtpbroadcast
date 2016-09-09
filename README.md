@@ -50,6 +50,9 @@ Configuration
 ; Path for job JSONs
 ; job_path = /tmp/jobs
 
+; Path for temp job JSONs
+; job_temp_path = /tmp/jobs-temp
+
 ; printf pattern for job filenames (.json is auto)
 ; Short usage, the following gets substituted:
 ; #{time}     is timestamp (guint64)
@@ -480,6 +483,9 @@ Thumbnailer creates archives of single `keyframe` every configurable interval of
     "event": "thumbnailing-finished"
 }
 ```
+
+After first valid RTP packet arrives the `job-file` is created and placed into configurable `job-temp` folder. Once the `archive-finished` or 
+`thumbnailing-finished` event occurs the `job-file` is moved to the final `job` folder.   
 
 Advanced
 --------
