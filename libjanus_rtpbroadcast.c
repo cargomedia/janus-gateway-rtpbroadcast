@@ -127,6 +127,7 @@ url = RTSP stream URL (only if type=rtsp)
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <ftw.h>
 
 #include "janus/debug.h"
 #include "janus/apierror.h"
@@ -137,6 +138,9 @@ url = RTSP stream URL (only if type=rtsp)
 #include "janus/record.h"
 #include "janus/utils.h"
 
+#define	_XOPEN_SOURCE	500
+#define	FTW_DEPTH	8
+#define	FTW_PHYS	1
 
 /* Plugin information */
 #define CM_RTPBCAST_VERSION			5
@@ -3106,17 +3110,22 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 
 	g_free(md5);
 
-	// we need some reference
-
-	char fullpath[512];
-	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path_temp, fname);
-	g_free(fname);
-
-	if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
-		JANUS_LOG(LOG_ERR, "Error saving JSON to %s\n", fullpath);
+	json_t *mountpoint_id = json_object_get(response, "id");
+	char dirpath[512];
+	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name);
+	if(janus_mkdir(dirpath, 0755) < 0) {
+		JANUS_LOG(LOG_ERR, "Couldn't create folder in temporary jobs folder, error creating folder '%s'...\n", dirpath);
 	} else {
-		JANUS_LOG(LOG_INFO, "Created `jobfile` for recording %s\n", fullpath);
+		char fullpath[512];
+		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name, fname);
+
+		if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
+			JANUS_LOG(LOG_ERR, "Error saving JSON to %s\n", fullpath);
+		} else {
+			JANUS_LOG(LOG_INFO, "Created `jobfile` for recording %s\n", fullpath);
+		}
 	}
+	g_free(fname);
 
 	json_decref(envelope);
 }
@@ -3130,7 +3139,7 @@ static void cm_rtpbcast_generic_start_recording(
 		const char *id,									/* streamChannelKey */
 		const char *uid,								/* unique ID */
 		const char *types[],						/* Type labels, per recorder */
-		gboolean is_video[]							/* Whether stream is video, per recorder */
+		gboolean is_video[],						/* Whether stream is video, per recorder */
 		const char *event_name					/* JSON event name for notification */
 	) {
 		/* FIXME @landswellsong which mutex we must lock? */
@@ -3234,6 +3243,11 @@ static void cm_rtpbcast_generic_stop_recording(
 				janus_recorder_free(tmp);
 			}
 		}
+		// dirpath with job files, grouped by event-name
+		char dirpath[512];
+		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+		rmrf(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
 	} else {
 		for (j = start; j <= end; j++) {
 			if (recorders[j]) {
@@ -3253,8 +3267,7 @@ static void cm_rtpbcast_generic_stop_recording(
 		for (j = start; j <= end; j++)
 			res &= (!recorders[j]);
 
-		// MOVE EVENT TO PROPER JOB FOLDER
-		// We need reference to move file on stop?
+		// move all files of the patter mountpoint-id/event-name/* into job_path
 	}
 }
 
@@ -3268,7 +3281,8 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt, int source_index) 
 		mnt->id,
 		mnt->uid,
 		av_names,
-		is_video
+		is_video,
+		"archive-finished"
 	);
 }
 
@@ -3295,7 +3309,8 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt, int source_inde
 		mnt->id,
 		mnt->uid,
 		types,
-		is_video
+		is_video,
+		"thumbnailing-finished"
 	);
 }
 
@@ -3842,4 +3857,19 @@ cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int 
 		h264pay->is_keyframe = TRUE;
 	}
 	return h264pay;
+}
+
+int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf)
+{
+	int rv = remove(fpath);
+
+	if (rv)
+		perror(fpath);
+
+	return rv;
+}
+
+int rmrf(char *path)
+{
+	return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
 }
