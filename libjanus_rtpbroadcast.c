@@ -234,6 +234,7 @@ static struct {
 	const char *hostname;
 	guint minport, maxport;
 	const char *job_path;
+	const char *job_path_temp;
 	const char *job_pattern;
 	const char *archive_path;
 	const char *recording_pattern;
@@ -753,6 +754,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
+	cm_rtpbcast_settings.job_path_temp = g_strdup("/tmp/jobs-temp");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
@@ -830,6 +832,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char *inames [] = {
 			 "hostname",
 			 "job_path",
+			 "job_path_temp",
 			 "job_pattern",
 			 "archive_path",
 			 "recording_pattern",
@@ -838,6 +841,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char **ivars [] = {
 				&cm_rtpbcast_settings.hostname,
 				&cm_rtpbcast_settings.job_path,
+				&cm_rtpbcast_settings.job_path_temp,
 				&cm_rtpbcast_settings.job_pattern,
 				&cm_rtpbcast_settings.archive_path,
 				&cm_rtpbcast_settings.recording_pattern,
@@ -952,6 +956,7 @@ void cm_rtpbcast_destroy(void) {
 	/* Freeing configuration strings */
 	g_free((gpointer)cm_rtpbcast_settings.hostname);
 	g_free((gpointer)cm_rtpbcast_settings.job_path);
+	g_free((gpointer)cm_rtpbcast_settings.job_path_temp);
 	g_free((gpointer)cm_rtpbcast_settings.job_pattern);
 	g_free((gpointer)cm_rtpbcast_settings.archive_path);
 	g_free((gpointer)cm_rtpbcast_settings.recording_pattern);
