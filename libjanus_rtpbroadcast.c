@@ -3106,8 +3106,10 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 
 	g_free(md5);
 
+	// we need some reference
+
 	char fullpath[512];
-	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path, fname);
+	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path_temp, fname);
 	g_free(fname);
 
 	if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
@@ -3129,6 +3131,7 @@ static void cm_rtpbcast_generic_start_recording(
 		const char *uid,								/* unique ID */
 		const char *types[],						/* Type labels, per recorder */
 		gboolean is_video[]							/* Whether stream is video, per recorder */
+		const char *event_name					/* JSON event name for notification */
 	) {
 		/* FIXME @landswellsong which mutex we must lock? */
 		/* TODO @landswellsong error reporting upward maybe? */
@@ -3142,6 +3145,8 @@ static void cm_rtpbcast_generic_start_recording(
 		json_t *response = json_object();
 		json_object_set_new(response, "id", json_string(id));
 		json_object_set_new(response, "uid", json_string(uid));
+		/* Timestamp of file creation in seconds */
+		json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
 
 		/* Assuming streams contain both video and audio */
 		guint64 mt = janus_get_monotonic_time();
@@ -3191,6 +3196,9 @@ static void cm_rtpbcast_generic_start_recording(
 		for (j = start; j <= end; j++)
 			res |= (recorders[j] != NULL);
 
+		if(res)
+			cm_rtpbcast_store_event(response, event_name);
+
 		json_decref(response);
 }
 
@@ -3208,8 +3216,6 @@ static void cm_rtpbcast_generic_stop_recording(
 		res &= (!recorders[j]);
 	if (res)
 		return;
-
-	json_t *response = json_object();
 
 	/* Don't allow to create job file if not frame has been stored. Audio source will be ignored too if no keyframe arrived for video stream */
 	int recorder_video_index = (start == end)? 0 : VIDEO;
@@ -3229,20 +3235,12 @@ static void cm_rtpbcast_generic_stop_recording(
 			}
 		}
 	} else {
-
-		/* Event for notification */
-		json_object_set_new(response, "id", json_string(id));
-		json_object_set_new(response, "uid", json_string(uid));
-		/* Timestamp of file creation in seconds */
-		json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
-
 		for (j = start; j <= end; j++) {
 			if (recorders[j]) {
 				char fname[512];
 				g_snprintf(fname, 512, "%s/%s", recorders[j]->r->dir? recorders[j]->r->dir : "",
 					recorders[j]->r->filename? recorders[j]->r->filename : "??");
 				janus_recorder_close(recorders[j]->r);
-				json_object_set_new(response, types[j], json_string(fname));
 				JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", id, types[j], fname);
 				janus_recorder *tmp = recorders[j]->r;
 				recorders[j]->r = NULL;
@@ -3255,11 +3253,9 @@ static void cm_rtpbcast_generic_stop_recording(
 		for (j = start; j <= end; j++)
 			res &= (!recorders[j]);
 
-		if(res)
-			cm_rtpbcast_store_event(response, event_name);
+		// MOVE EVENT TO PROPER JOB FOLDER
+		// We need reference to move file on stop?
 	}
-
-	json_decref(response);
 }
 
 void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt, int source_index) {
