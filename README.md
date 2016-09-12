@@ -77,6 +77,9 @@ Configuration
 ; Thumbnailing interval in seconds
 ; thumbnailing_interval = 60
 
+; Thumbnailing duration in seconds
+; thumbnailing_duration = 10
+
 ; Bad connection simulator, only for debug purpose
 ; Note: defaults are 0, comment the options to disable
 ; simulate_bad_connection = yes
@@ -466,7 +469,7 @@ It creates configurable `job-files` with plugin events. It support for `archive-
 ```
 
 ##### `thumbnailing-finished`
-Thumbnailer creates archives of single `keyframe` every configurable interval of time.
+Thumbnailer creates archives of configurable duration for configurable interval of time.
 
 ```json
 {
