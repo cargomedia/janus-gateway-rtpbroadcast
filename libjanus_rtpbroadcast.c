@@ -1978,12 +1978,6 @@ static void *cm_rtpbcast_handler(void *data) {
 			json_object_set_new(result, "status", json_string("pausing"));
 		} else if(!strcasecmp(request_text, "switch-source")) {
 			/* This listener wants to switch to a different source of current mountpoint */
-			if(session->source == NULL) {
-				JANUS_LOG(LOG_INFO, "Can't switch: not on a any mountpoint/source\n");
-				error_code = CM_RTPBCAST_ERROR_NO_SUCH_MOUNTPOINT;
-				g_snprintf(error_cause, 512, "Can't switch: not on a any mountpoint/source");
-				goto error;
-			}
 			cm_rtpbcast_mountpoint *mp = session->source->mp;
 			if(mp == NULL) {
 				JANUS_LOG(LOG_INFO, "Can't switch: not on a mountpoint\n");
@@ -2015,9 +2009,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			result = json_object();
 
 			if(index_value) {
-				janus_mutex_lock(&mountpoints_mutex);
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
-				janus_mutex_unlock(&mountpoints_mutex);
 				cm_rtpbcast_schedule_switch(session, newsrc);
 				session->autoswitch = FALSE;
 			} else {
