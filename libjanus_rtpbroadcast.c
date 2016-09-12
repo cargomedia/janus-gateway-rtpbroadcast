@@ -2020,7 +2020,9 @@ static void *cm_rtpbcast_handler(void *data) {
 			result = json_object();
 
 			if(index_value) {
+				janus_mutex_lock(&mountpoints_mutex);
 				cm_rtpbcast_rtp_source *newsrc = g_array_index(mp->sources, cm_rtpbcast_rtp_source *, (index_value-1));
+				janus_mutex_unlock(&mountpoints_mutex);
 				cm_rtpbcast_schedule_switch(session, newsrc);
 				session->autoswitch = FALSE;
 			} else {
