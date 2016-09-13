@@ -3497,6 +3497,9 @@ static void cm_rtpbcast_execute_switching(gpointer data, gpointer user_data) {
 }
 
 void cm_rtpbcast_process_switchers(cm_rtpbcast_rtp_source *src) {
+	if(!src)
+		return;
+
 	if (src->waiters) {
 		janus_mutex_lock(&src->mutex);
 		/* Switch everybody */
