@@ -2810,6 +2810,8 @@ static void cm_rtpbcast_relay_rtp_packet(gpointer data, gpointer user_data) {
 		cm_rtpbcast_relay_rtp_packet_via_udp(session, packet->source_index, packet->is_video, (char *)packet->data, packet->length);
 	}
 
+	janus_mutex_unlock(&session->mutex);
+
 	/* Restore the timestamp and sequence number to what the publisher set them to */
 	packet->data->timestamp = htonl(packet->timestamp);
 	packet->data->seq_number = htons(packet->seq_number);
