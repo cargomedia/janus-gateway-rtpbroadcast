@@ -1064,16 +1064,15 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		janus_mutex_unlock(&session->source->mutex);
 	}
 
-	janus_mutex_lock(&session->mutex);
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
+
+	janus_mutex_lock(&session->mutex);
 	/* If this is a streamer session, kill the stream */
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
-	janus_mutex_unlock(&session->mutex);
-
-	janus_mutex_lock(&sessions_mutex);
+	/* Remove from session list */
 	g_hash_table_remove(sessions, handle);
 	janus_mutex_unlock(&sessions_mutex);
 
@@ -3001,7 +3000,7 @@ cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
 		janus_mutex_unlock(&src->stats[VIDEO].stat_mutex);
 
 		/* If current bitrate for any stream is not calculated (-1, null), let's reset current lookup state */
-		if (source_bw == NULL || source_bw == -1) {
+		if (source_bw || source_bw == -1) {
 			is_stream_stats_available = FALSE;
 			best_src = NULL;
 			break;
