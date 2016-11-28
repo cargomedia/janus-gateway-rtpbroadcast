@@ -3295,6 +3295,7 @@ char *str_replace(char *instr, const char *needle, const char *replace) {
 void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	cm_rtpbcast_mountpoint * mp = (cm_rtpbcast_mountpoint *) data;
 	if(!mp->destroyed) {
+		mp->destroyed = janus_get_monotonic_time();
 		/* FIXME Should we kick the current viewers as well? */
 		guint i;
 		for (i = 0; i < mp->sources->len; i++) {
@@ -3352,7 +3353,6 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 		}
 
 		/* Remove mountpoint from the hashtable: this will get it destroyed */
-		mp->destroyed = janus_get_monotonic_time();
 		janus_mutex_lock(&mountpoints_mutex);
 		g_hash_table_remove(mountpoints, mp->id);
 		janus_mutex_unlock(&mountpoints_mutex);
