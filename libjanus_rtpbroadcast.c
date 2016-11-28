@@ -1050,27 +1050,27 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 		session->destroyed = janus_get_monotonic_time();
 
 		JANUS_LOG(LOG_VERB, "Removing CM RTP Broadcast session...\n");
-        /* If session is watching something, remove it from listeners */
-        /* TODO: abstract "attach to source" and "remove from source" with a special func
-         * also see below at cm_rtpbcast_stop_udp_relays() for example */
-        if(session->source) {
-            janus_mutex_lock(&session->source->mutex);
-            session->source->listeners = g_list_remove_all(session->source->listeners, session);
-            janus_mutex_unlock(&session->source->mutex);
-        }
+		/* If session is watching something, remove it from listeners */
+		/* TODO: abstract "attach to source" and "remove from source" with a special func
+		 * also see below at cm_rtpbcast_stop_udp_relays() for example */
+		if(session->source) {
+			janus_mutex_lock(&session->source->mutex);
+			session->source->listeners = g_list_remove_all(session->source->listeners, session);
+			janus_mutex_unlock(&session->source->mutex);
+		}
 
-        janus_mutex_lock(&session->mutex);
-        /* If the session is relaying UDP, also remove listeners from all the sources */
-        cm_rtpbcast_stop_udp_relays(session, NULL);
-        /* If this is a streamer session, kill the stream */
-        if(session->mps) {
-            g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
-        session->mps = NULL;
-	    janus_mutex_unlock(&session->mutex);
+		janus_mutex_lock(&session->mutex);
+		/* If the session is relaying UDP, also remove listeners from all the sources */
+		cm_rtpbcast_stop_udp_relays(session, NULL);
+		/* If this is a streamer session, kill the stream */
+		if(session->mps) {
+			g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
+		session->mps = NULL;
+		janus_mutex_unlock(&session->mutex);
 
-	    janus_mutex_lock(&sessions_mutex);
+		janus_mutex_lock(&sessions_mutex);
 		g_hash_table_remove(sessions, handle);
-	    janus_mutex_unlock(&sessions_mutex);
+		janus_mutex_unlock(&sessions_mutex);
 
 		super_sessions = g_list_remove_all(super_sessions, session);
 		/* Cleaning up and removing the session is done in a lazy way */
@@ -2971,10 +2971,10 @@ static void cm_rtpbcast_stats_update(cm_rtpbcast_stats *st, gsize bytes, guint32
 }
 
 gint cm_rtpbcast_rtp_source_video_bitrate_sort_function (gconstpointer a, gconstpointer b) {
-    cm_rtpbcast_rtp_source * source_a = (cm_rtpbcast_rtp_source *) a;
-    cm_rtpbcast_rtp_source * source_b = (cm_rtpbcast_rtp_source *) b;
+	cm_rtpbcast_rtp_source * source_a = (cm_rtpbcast_rtp_source *) a;
+	cm_rtpbcast_rtp_source * source_b = (cm_rtpbcast_rtp_source *) b;
 
-    return (gint)source_b->stats[VIDEO].cur - (gint)source_a->stats[VIDEO].cur;
+	return (gint)source_b->stats[VIDEO].cur - (gint)source_a->stats[VIDEO].cur;
 }
 
 cm_rtpbcast_rtp_source* cm_rtpbcast_pick_source(GArray *sources, guint64 remb) {
@@ -3752,10 +3752,10 @@ cm_rtpbcast_vp8_payload_dscr *cm_rtpbcast_vp8_parse_payload(char* buffer, int le
 }
 
 gint cm_rtpbcast_rtp_relay_packet_seq_sort_function (gconstpointer a, gconstpointer b) {
-    cm_rtpbcast_rtp_relay_packet * packet_a = (cm_rtpbcast_rtp_relay_packet *) a;
-    cm_rtpbcast_rtp_relay_packet * packet_b = (cm_rtpbcast_rtp_relay_packet *) b;
+	cm_rtpbcast_rtp_relay_packet * packet_a = (cm_rtpbcast_rtp_relay_packet *) a;
+	cm_rtpbcast_rtp_relay_packet * packet_b = (cm_rtpbcast_rtp_relay_packet *) b;
 
-    return (gint)packet_a->seq_number - (gint)packet_b->seq_number;
+	return (gint)packet_a->seq_number - (gint)packet_b->seq_number;
 }
 
 static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
