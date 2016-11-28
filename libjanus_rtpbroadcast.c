@@ -1443,9 +1443,9 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			g_snprintf(error_cause, 512, "No such mountpoint/stream %s", id_value);
 			goto error;
 		}
-		janus_mutex_unlock(&mountpoints_mutex);
 		JANUS_LOG(LOG_INFO, "Request to unmount mountpoint/stream %s\n", id_value);
 		cm_rtpbcast_mountpoint_destroy(mp, NULL);
+		janus_mutex_unlock(&mountpoints_mutex);
 		/* Send info back */
 		response = json_object();
 		json_object_set_new(response, "streaming", json_string("destroyed"));
