@@ -140,8 +140,14 @@ url = RTSP stream URL (only if type=rtsp)
 #include "janus/utils.h"
 
 #define	_XOPEN_SOURCE	500
-#define	FTW_DEPTH	8
-#define	FTW_PHYS	1
+#define	FTW_DEPTH		8
+#define	FTW_PHYS		1
+#define	FTW_DP			5
+
+struct FTW {
+	int base;
+	int level;
+};
 
 /* Plugin information */
 #define CM_RTPBCAST_VERSION			5
@@ -871,14 +877,13 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	}
 	cm_rtpbcast_port_manager_init(cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
 
+	JANUS_LOG(LOG_INFO, "%s: Initializing...!\n", CM_RTPBCAST_NAME);
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
 	/* Move JobFile-s from temporary path to final job path */
 	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Approved waiting `jobfiles` as the final `jobfiles`\n", CM_RTPBCAST_NAME);
+	JANUS_LOG(LOG_INFO, "%s: Imported waiting events from %s into %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp, cm_rtpbcast_settings.job_path);
 	filesystem_rmrf(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Removed old temporary `jobfiles`\n", CM_RTPBCAST_NAME);
-
-	janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
+	JANUS_LOG(LOG_INFO, "%s: Removed outdated events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -2548,15 +2553,15 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					ctx.base_seq[j] = ntohs(packet.data->seq_number);
 				}
 
-                /* If we need recording, start it before creating threads */
-                if (mountpoint->recorded && nstream == 0) {
-                    if(source->keyframe.latest_keyframe != NULL) {
-                        if(!mountpoint->rc[j]) {
-                            JANUS_LOG(LOG_INFO, "[%s] Starting recording for video and audio\n", mountpoint->id);
-                            cm_rtpbcast_start_recording(mountpoint, 0); /* Source at index 0 will be recorded */
-                        }
-                    }
-                }
+				/* If we need recording, start it before creating threads */
+				if (mountpoint->recorded && nstream == 0) {
+					if(source->keyframe.latest_keyframe != NULL) {
+						if(!mountpoint->rc[j]) {
+							JANUS_LOG(LOG_INFO, "[%s] Starting recording for video and audio\n", mountpoint->id);
+							cm_rtpbcast_start_recording(mountpoint, 0); /* Source at index 0 will be recorded */
+						}
+					}
+				}
 
 				/* FIXME We're assuming Opus here for audio and 15fps for video... */
 				ctx.last_ts[j] = (ntohl(packet.data->timestamp)-ctx.base_ts[j])+ctx.base_ts_prev[j]+ (j == AUDIO? 960 : 4500);
@@ -3869,7 +3874,10 @@ int filesystem_is_file(const char *path) {
 	return S_ISREG(path_stat.st_mode);
 }
 
-int filesystem_unlink(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+int filesystem_nftw_unlink(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	if(FTW_DP == typeflag && ftwbuf->level == 0) {
+		return 0;
+	}
 	int rv = remove(fpath);
 	if (rv)
 		perror(fpath);
@@ -3877,7 +3885,7 @@ int filesystem_unlink(const char *fpath, const struct stat *sb, int typeflag, st
 }
 
 int filesystem_rmrf(char *path) {
-	return nftw(path, filesystem_unlink, 64, FTW_DEPTH | FTW_PHYS);
+	return nftw(path, filesystem_nftw_unlink, 64, FTW_DEPTH | FTW_PHYS);
 }
 
 int cm_rtpbcast_import_event_from_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
