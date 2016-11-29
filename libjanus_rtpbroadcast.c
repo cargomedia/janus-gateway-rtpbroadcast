@@ -873,10 +873,11 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
 	/* Move JobFile-s from temporary path to final job path */
-	cm_rtpbcast_mv_files_to_jobs(cm_rtpbcast_settings.job_path_temp);
+	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_path_temp);
 	JANUS_LOG(LOG_INFO, "%s: Approved waiting `jobfiles` as the final `jobfiles`\n", CM_RTPBCAST_NAME);
-	rmrf(cm_rtpbcast_settings.job_path_temp);
+	filesystem_rmrf(cm_rtpbcast_settings.job_path_temp);
 	JANUS_LOG(LOG_INFO, "%s: Removed old temporary `jobfiles`\n", CM_RTPBCAST_NAME);
+
 	janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
 
 	/* Not showing anything, no mountpoint configured at startup */
@@ -3242,7 +3243,7 @@ static void cm_rtpbcast_generic_stop_recording(
 		// dirpath with job files, grouped by event-name
 		char dirpath[512];
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
-		rmrf(dirpath);
+		filesystem_rmrf(dirpath);
 		JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
 	} else {
 		for (j = start; j <= end; j++) {
@@ -3263,14 +3264,12 @@ static void cm_rtpbcast_generic_stop_recording(
 		for (j = start; j <= end; j++)
 			res &= (!recorders[j]);
 
-		// dirpath with job files, grouped by event-name
 		char dirpath[512];
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
-
-		cm_rtpbcast_mv_files_to_jobs(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Approved temporary `jobfiles` and moved from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
-		rmrf(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Removed `jobfiles` at %s\n", id, dirpath);
+		cm_rtpbcast_import_events_from_path(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Imported events from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
+		filesystem_rmrf(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Removed outdated events at %s\n", id, dirpath);
 	}
 }
 
@@ -3864,25 +3863,25 @@ cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int 
 	return h264pay;
 }
 
-int is_regular_file(const char *path) {
+int filesystem_is_file(const char *path) {
 	struct stat path_stat;
 	stat(path, &path_stat);
 	return S_ISREG(path_stat.st_mode);
 }
 
-int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+int filesystem_unlink(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
 	int rv = remove(fpath);
 	if (rv)
 		perror(fpath);
 	return rv;
 }
 
-int rmrf(char *path) {
-	return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
+int filesystem_rmrf(char *path) {
+	return nftw(path, filesystem_unlink, 64, FTW_DEPTH | FTW_PHYS);
 }
 
-int cm_rtpbcast_mv_file_to_jobs(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
-	if(!is_regular_file(fpath))
+int cm_rtpbcast_import_event_from_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	if(!filesystem_is_file(fpath))
 		return 0;
 
 	char destpath[512];
@@ -3894,7 +3893,7 @@ int cm_rtpbcast_mv_file_to_jobs(const char *fpath, const struct stat *sb, int ty
 	return rv;
 }
 
-int cm_rtpbcast_mv_files_to_jobs(char *path) {
-	return nftw(path, cm_rtpbcast_mv_file_to_jobs, 64, FTW_DEPTH | FTW_PHYS);
+int cm_rtpbcast_import_events_from_path(char *path) {
+	return nftw(path, cm_rtpbcast_import_event_from_path, 64, FTW_DEPTH | FTW_PHYS);
 }
 
