@@ -1,9 +1,6 @@
 Vagrant.configure('2') do |config|
   config.vm.box = 'cargomedia/debian-8-amd64-default'
 
-  config.vm.network :private_network, ip: '10.20.10.10'
-  config.vm.network :public_network, :bridge => 'en0: Wi-Fi (AirPort)'
-
   config.vm.provision 'deps', type: 'shell', inline: [
      'cd /vagrant',
      'sudo apt-get update',
