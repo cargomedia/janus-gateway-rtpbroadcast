@@ -874,9 +874,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
 	/* Move JobFile-s from temporary path to final job path */
 	cm_rtpbcast_mv_files_to_jobs(cm_rtpbcast_settings.job_path_temp);
+	JANUS_LOG(LOG_INFO, "%s: Moved temporary/waiting jobs as the final Job files!\n", CM_RTPBCAST_NAME);
 	rmrf(cm_rtpbcast_settings.job_path_temp);
 	janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
-	JANUS_LOG(LOG_INFO, "%s: Moved temporary job files to the final job path!\n", CM_RTPBCAST_NAME);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -1469,7 +1469,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 		janus_mutex_unlock(&mountpoints_mutex);
-		JANUS_LOG(LOG_INFO, "Request to unmount mountpoint/stream %s\n", id_value);
+		JANUS_LOG(LOG_INFO, "[%s] Request to unmount mountpoint/stream\n", id_value);
 		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		/* Send info back */
 		response = json_object();
@@ -2544,14 +2544,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					ctx.base_ts[j] = ntohl(packet.data->timestamp);
 					ctx.base_seq_prev[j] = ctx.last_seq[j];
 					ctx.base_seq[j] = ntohs(packet.data->seq_number);
-					/* FIXME @landswellsong maybe update stats here too? */
-					
-					/* If we need recording, start it before creating threads */
-					if (mountpoint->recorded && nstream == 0 && j == VIDEO) {
-						cm_rtpbcast_start_recording(mountpoint, 0); /* Source at index 0 will be recorded */
-					}
-					
 				}
+
+                /* If we need recording, start it before creating threads */
+                if (mountpoint->recorded && nstream == 0) {
+                    if(source->keyframe.latest_keyframe != NULL) {
+                        if(!mountpoint->rc[j]) {
+                            JANUS_LOG(LOG_INFO, "[%s] Starting recording for video and audio\n", mountpoint->id);
+                            cm_rtpbcast_start_recording(mountpoint, 0); /* Source at index 0 will be recorded */
+                        }
+                    }
+                }
+
 				/* FIXME We're assuming Opus here for audio and 15fps for video... */
 				ctx.last_ts[j] = (ntohl(packet.data->timestamp)-ctx.base_ts[j])+ctx.base_ts_prev[j]+ (j == AUDIO? 960 : 4500);
 				packet.data->timestamp = htonl(ctx.last_ts[j]);
@@ -3105,15 +3109,15 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 	char dirpath[512];
 	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name);
 	if(janus_mkdir(dirpath, 0755) < 0) {
-		JANUS_LOG(LOG_ERR, "Couldn't create folder in temporary jobs folder, error creating folder '%s'...\n", dirpath);
+		JANUS_LOG(LOG_ERR, "[%s] Couldn't create folder in temporary jobs folder, error creating folder '%s'...\n", json_string_value(mountpoint_id), dirpath);
 	} else {
 		char fullpath[512];
 		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name, fname);
 
 		if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
-			JANUS_LOG(LOG_ERR, "Error saving JSON to %s\n", fullpath);
+			JANUS_LOG(LOG_ERR, "[%s] Error saving JSON to %s\n", json_string_value(mountpoint_id), fullpath);
 		} else {
-			JANUS_LOG(LOG_INFO, "Created `jobfile` for recording %s\n", fullpath);
+			JANUS_LOG(LOG_INFO, "[%s] Created `jobfile` for recording %s\n", json_string_value(mountpoint_id), fullpath);
 		}
 	}
 	g_free(fname);
@@ -3181,7 +3185,7 @@ static void cm_rtpbcast_generic_start_recording(
 		g_free(fname);
 
 		if(recorders[j] == NULL) {
-			JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", types[j]);
+			JANUS_LOG(LOG_ERR, "[%s] Error starting recorder for %s\n", id, types[j]);
 		} else {
 			char fname[512];
 			g_snprintf(fname, 512, "%s/%s", recorders[j]->r->dir? recorders[j]->r->dir : "",
