@@ -873,7 +873,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
 	/* Move JobFile-s from temporary path to final job path */
-	move_files_to_job_path(cm_rtpbcast_settings.job_path_temp);
+	cm_rtpbcast_mv_files_to_jobs(cm_rtpbcast_settings.job_path_temp);
 	rmrf(cm_rtpbcast_settings.job_path_temp);
 	janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
 	JANUS_LOG(LOG_INFO, "%s: Moved temporary job files to the final job path!\n", CM_RTPBCAST_NAME);
@@ -3262,7 +3262,7 @@ static void cm_rtpbcast_generic_stop_recording(
 		char dirpath[512];
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
 
-		move_files_to_job_path(dirpath);
+		cm_rtpbcast_mv_files_to_jobs(dirpath);
 		JANUS_LOG(LOG_INFO, "[%s] Moved job-files from %s to %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
 		rmrf(dirpath);
 		JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
@@ -3876,7 +3876,7 @@ int rmrf(char *path) {
 	return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
 }
 
-int move_file_to_job_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+int cm_rtpbcast_mv_file_to_jobs(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
 	if(!is_regular_file(fpath))
 		return 0;
 
@@ -3889,7 +3889,7 @@ int move_file_to_job_path(const char *fpath, const struct stat *sb, int typeflag
 	return rv;
 }
 
-int move_files_to_job_path(char *path) {
-	return nftw(path, move_file_to_job_path, 64, FTW_DEPTH | FTW_PHYS);
+int cm_rtpbcast_mv_files_to_jobs(char *path) {
+	return nftw(path, cm_rtpbcast_mv_file_to_jobs, 64, FTW_DEPTH | FTW_PHYS);
 }
 
