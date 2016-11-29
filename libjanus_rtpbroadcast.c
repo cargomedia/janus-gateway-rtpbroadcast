@@ -2530,8 +2530,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					continue;
 				}
 
-				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
-				/* If paused, ignore this packet */
+				/* If paused or destroyed, ignore this packet */
 				if(!mountpoint->enabled)
 					continue;
 
@@ -2554,7 +2553,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				}
 
 				/* If we need recording, start it before creating threads */
-				if (mountpoint->recorded && nstream == 0) {
+				if (!mountpoint->destroyed && mountpoint->recorded && nstream == 0) {
 					if(source->keyframe.latest_keyframe != NULL) {
 						if(!mountpoint->rc[j]) {
 							JANUS_LOG(LOG_INFO, "[%s] Starting recording for video and audio\n", mountpoint->id);
