@@ -128,6 +128,7 @@ url = RTSP stream URL (only if type=rtsp)
 #include <netdb.h>
 #include <unistd.h>
 #include <ftw.h>
+#include <libgen.h>
 
 #include "janus/debug.h"
 #include "janus/apierror.h"
@@ -3249,7 +3250,14 @@ static void cm_rtpbcast_generic_stop_recording(
 		for (j = start; j <= end; j++)
 			res &= (!recorders[j]);
 
-		// move all files of the patter mountpoint-id/event-name/* into job_path
+        // dirpath with job files, grouped by event-name
+        char dirpath[512];
+        g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+
+        move_files_to_job_path(dirpath);
+        JANUS_LOG(LOG_INFO, "[%s] Moved job-files from %s to %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
+        rmrf(dirpath);
+        JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
 	}
 }
 
@@ -3843,17 +3851,37 @@ cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int 
 	return h264pay;
 }
 
-int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf)
-{
-	int rv = remove(fpath);
+int is_regular_file(const char *path) {
+    struct stat path_stat;
+    stat(path, &path_stat);
+    return S_ISREG(path_stat.st_mode);
+}
 
+int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	int rv = remove(fpath);
 	if (rv)
 		perror(fpath);
-
 	return rv;
 }
 
-int rmrf(char *path)
-{
+int rmrf(char *path) {
 	return nftw(path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
 }
+
+int move_file_to_job_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	if(!is_regular_file(fpath))
+		return;
+
+	char destpath[512];
+	g_snprintf(destpath, 512, "%s/%s", cm_rtpbcast_settings.job_path, basename(fpath));
+
+	int rv = rename(fpath, destpath);
+	if (rv)
+		perror(fpath);
+	return rv;
+}
+
+int move_files_to_job_path(char *path) {
+	return nftw(path, move_file_to_job_path, 64, FTW_DEPTH | FTW_PHYS);
+}
+
