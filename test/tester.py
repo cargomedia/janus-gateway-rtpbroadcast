@@ -3,7 +3,7 @@
 
 import requests, json, subprocess, time
 
-janus_http = '10.20.10.10'
+janus_http = '127.0.0.1'
 janus_url = "http://" + str(janus_http) + ":8088/janus"
 
 mountpoint_id = "Ababagalamaga"
