@@ -589,6 +589,23 @@ make
 make install
 ```
 
+Documentation
+-------------
+This project includes `.doxygen` file which allows to create docu.
+
+Requirements
+```
+apt-get install doxygen
+apt-get install graphviz
+```
+
+Build
+```
+doxygen .doxygen
+```
+
+By default the output will be stored in `./docu`.
+
 Packages
 --------
 Please find [DEB packages](https://github.com/cargomedia/debian-packages) for this plugin.
