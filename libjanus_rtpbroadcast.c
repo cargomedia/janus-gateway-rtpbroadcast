@@ -874,8 +874,9 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
 	/* Move JobFile-s from temporary path to final job path */
 	cm_rtpbcast_mv_files_to_jobs(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Moved temporary/waiting jobs as the final Job files!\n", CM_RTPBCAST_NAME);
+	JANUS_LOG(LOG_INFO, "%s: Approved waiting `jobfiles` as the final `jobfiles`\n", CM_RTPBCAST_NAME);
 	rmrf(cm_rtpbcast_settings.job_path_temp);
+	JANUS_LOG(LOG_INFO, "%s: Removed old temporary `jobfiles`\n", CM_RTPBCAST_NAME);
 	janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
 
 	/* Not showing anything, no mountpoint configured at startup */
@@ -3267,9 +3268,9 @@ static void cm_rtpbcast_generic_stop_recording(
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
 
 		cm_rtpbcast_mv_files_to_jobs(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Moved job-files from %s to %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
+		JANUS_LOG(LOG_INFO, "[%s] Approved temporary `jobfiles` and moved from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
 		rmrf(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Removed `jobfiles` at %s\n", id, dirpath);
 	}
 }
 
