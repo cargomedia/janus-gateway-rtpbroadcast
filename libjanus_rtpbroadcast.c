@@ -871,6 +871,13 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	}
 	cm_rtpbcast_port_manager_init(cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
 
+    /* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
+    /* Move JobFile-s from temporary path to final job path */
+    move_files_to_job_path(cm_rtpbcast_settings.job_path_temp);
+    rmrf(cm_rtpbcast_settings.job_path_temp);
+    janus_mkdir(cm_rtpbcast_settings.job_path_temp, 0755);
+    JANUS_LOG(LOG_INFO, "%s: Moved temporary job files to the final job path!\n", CM_RTPBCAST_NAME);
+
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
 	super_sessions = NULL;
@@ -906,7 +913,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast handler thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
 	}
-	JANUS_LOG(LOG_INFO, "%s initialized!\n", CM_RTPBCAST_NAME);
+	JANUS_LOG(LOG_INFO, "%s: Initialized!\n", CM_RTPBCAST_NAME);
 	return 0;
 }
 
