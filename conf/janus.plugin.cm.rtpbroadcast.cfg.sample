@@ -29,6 +29,9 @@
 ; Path for job JSONs
 ; job_path = /tmp/jobs
 
+; Path for temp job JSONs
+; job_temp_path = /tmp/jobs-temp
+
 ; printf pattern for job filenames (.json is auto)
 ; Short usage, the following gets substituted:
 ; #{time}     is timestamp (guint64)

@@ -127,6 +127,8 @@ url = RTSP stream URL (only if type=rtsp)
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <ftw.h>
+#include <libgen.h>
 
 #include "janus/debug.h"
 #include "janus/apierror.h"
@@ -137,6 +139,15 @@ url = RTSP stream URL (only if type=rtsp)
 #include "janus/record.h"
 #include "janus/utils.h"
 
+#define	_XOPEN_SOURCE	500
+#define	FTW_DEPTH		8
+#define	FTW_PHYS		1
+#define	FTW_DP			5
+
+struct FTW {
+	int base;
+	int level;
+};
 
 /* Plugin information */
 #define CM_RTPBCAST_VERSION			5
@@ -234,6 +245,7 @@ static struct {
 	const char *hostname;
 	guint minport, maxport;
 	const char *job_path;
+	const char *job_path_temp;
 	const char *job_pattern;
 	const char *archive_path;
 	const char *recording_pattern;
@@ -749,6 +761,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
+	cm_rtpbcast_settings.job_path_temp = g_strdup("/tmp/jobs-temp");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
@@ -826,6 +839,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char *inames [] = {
 			 "hostname",
 			 "job_path",
+			 "job_path_temp",
 			 "job_pattern",
 			 "archive_path",
 			 "recording_pattern",
@@ -834,6 +848,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char **ivars [] = {
 				&cm_rtpbcast_settings.hostname,
 				&cm_rtpbcast_settings.job_path,
+				&cm_rtpbcast_settings.job_path_temp,
 				&cm_rtpbcast_settings.job_pattern,
 				&cm_rtpbcast_settings.archive_path,
 				&cm_rtpbcast_settings.recording_pattern,
@@ -861,6 +876,14 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		config = NULL;
 	}
 	cm_rtpbcast_port_manager_init(cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
+
+	JANUS_LOG(LOG_INFO, "%s: Initializing...\n", CM_RTPBCAST_NAME);
+	/* In case of crash, segfault, kill, restart let's see if there are some unfinished Events */
+	/* Move Events from temporary path to final job path */
+	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_path_temp);
+	JANUS_LOG(LOG_INFO, "%s: Imported waiting events from %s into %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp, cm_rtpbcast_settings.job_path);
+	filesystem_rmrf(cm_rtpbcast_settings.job_path_temp);
+	JANUS_LOG(LOG_INFO, "%s: Cleaned-up imported events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -897,7 +920,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP broadcast handler thread...\n", error->code, error->message ? error->message : "??");
 		return -1;
 	}
-	JANUS_LOG(LOG_INFO, "%s initialized!\n", CM_RTPBCAST_NAME);
+	JANUS_LOG(LOG_INFO, "%s: Initialized!\n", CM_RTPBCAST_NAME);
 	return 0;
 }
 
@@ -945,6 +968,7 @@ void cm_rtpbcast_destroy(void) {
 	/* Freeing configuration strings */
 	g_free((gpointer)cm_rtpbcast_settings.hostname);
 	g_free((gpointer)cm_rtpbcast_settings.job_path);
+	g_free((gpointer)cm_rtpbcast_settings.job_path_temp);
 	g_free((gpointer)cm_rtpbcast_settings.job_pattern);
 	g_free((gpointer)cm_rtpbcast_settings.archive_path);
 	g_free((gpointer)cm_rtpbcast_settings.recording_pattern);
@@ -1452,7 +1476,7 @@ struct janus_plugin_result *cm_rtpbcast_handle_message(janus_plugin_session *han
 			goto error;
 		}
 		janus_mutex_unlock(&mountpoints_mutex);
-		JANUS_LOG(LOG_INFO, "Request to unmount mountpoint/stream %s\n", id_value);
+		JANUS_LOG(LOG_INFO, "[%s] Request to unmount mountpoint/stream\n", id_value);
 		cm_rtpbcast_mountpoint_destroy(mp, NULL);
 		/* Send info back */
 		response = json_object();
@@ -1841,6 +1865,7 @@ static void *cm_rtpbcast_handler(void *data) {
 			json_t *streams = json_object_get(root, "streams");
 			size_t nstreams = json_array_size(streams);
 			if (nstreams==0 || !json_is_array(streams)) {
+				janus_mutex_unlock(&mountpoints_mutex);
 				JANUS_LOG(LOG_ERR, "Invalid element (streams should be a non-empty array)\n");
 				error_code = CM_RTPBCAST_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element (streams should be a non-empty array)");
@@ -2364,11 +2389,6 @@ cm_rtpbcast_mountpoint *cm_rtpbcast_create_rtp_source(
 
 	live_rtp->destroyed = 0;
 
-	/* If we need recording, start it before creating threads */
-	if (recorded) {
-		cm_rtpbcast_start_recording(live_rtp, 0); /* Source at index 0 will be recorded */
-	}
-
 	for (i = 0; i < live_rtp->sources->len; i++) {
 		char tempname[256];
 		memset(tempname, 0, 255);
@@ -2510,8 +2530,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					continue;
 				}
 
-				//~ JANUS_LOG(LOG_VERB, "************************\nGot %d bytes on the %і channel...\n", av_names[j], bytes);
-				/* If paused, ignore this packet */
+				/* If paused or destroyed, ignore this packet */
 				if(!mountpoint->enabled)
 					continue;
 
@@ -2531,8 +2550,18 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 					ctx.base_ts[j] = ntohl(packet.data->timestamp);
 					ctx.base_seq_prev[j] = ctx.last_seq[j];
 					ctx.base_seq[j] = ntohs(packet.data->seq_number);
-					/* FIXME @landswellsong maybe update stats here too? */
 				}
+
+				/* If we need recording, start it before creating threads */
+				if (!mountpoint->destroyed && mountpoint->recorded && nstream == 0) {
+					if(source->keyframe.latest_keyframe != NULL) {
+						if(!mountpoint->rc[j]) {
+							JANUS_LOG(LOG_INFO, "[%s] Starting recording for video and audio\n", mountpoint->id);
+							cm_rtpbcast_start_recording(mountpoint, 0); /* Source at index 0 will be recorded */
+						}
+					}
+				}
+
 				/* FIXME We're assuming Opus here for audio and 15fps for video... */
 				ctx.last_ts[j] = (ntohl(packet.data->timestamp)-ctx.base_ts[j])+ctx.base_ts_prev[j]+ (j == AUDIO? 960 : 4500);
 				packet.data->timestamp = htonl(ctx.last_ts[j]);
@@ -3082,92 +3111,105 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 
 	g_free(md5);
 
-	char fullpath[512];
-	g_snprintf(fullpath, 512, "%s/%s.json", cm_rtpbcast_settings.job_path, fname);
-	g_free(fname);
-
-	if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
-		JANUS_LOG(LOG_ERR, "Error saving JSON to %s\n", fullpath);
+	json_t *mountpoint_id = json_object_get(response, "id");
+	char dirpath[512];
+	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name);
+	if(janus_mkdir(dirpath, 0755) < 0) {
+		JANUS_LOG(LOG_ERR, "[%s] Couldn't create folder in temporary events folder: '%s'...\n", json_string_value(mountpoint_id), dirpath);
 	} else {
-		JANUS_LOG(LOG_INFO, "Created `jobfile` for recording %s\n", fullpath);
+		char fullpath[512];
+		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name, fname);
+
+		if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
+			JANUS_LOG(LOG_ERR, "[%s] Error saving JSON to %s\n", json_string_value(mountpoint_id), fullpath);
+		} else {
+			JANUS_LOG(LOG_INFO, "[%s] Created event for recording %s\n", json_string_value(mountpoint_id), fullpath);
+		}
 	}
+	g_free(fname);
 
 	json_decref(envelope);
 }
 
 /* Generic functions for both recording and thumbnailing */
 static void cm_rtpbcast_generic_start_recording(
-		cm_rtpbcast_recorder *recorders[],		/* Array or pointer to recorders */
+		cm_rtpbcast_recorder *recorders[],	/* Array or pointer to recorders */
 		cm_rtpbcast_rtp_source *src,		/* Source */
 		size_t start, size_t end, 			/* Inclusive, which ones to process */
 		const char *fname_pattern,			/* Printf pattern for filename */
-		const char *id,									/* streamChannelKey */
-		const char *uid,								/* unique ID */
-		const char *types[],						/* Type labels, per recorder */
-		gboolean is_video[]							/* Whether stream is video, per recorder */
-	) {
-		/* FIXME @landswellsong which mutex we must lock? */
-		/* TODO @landswellsong error reporting upward maybe? */
-		size_t j; gboolean res = FALSE;
-		for (j = start; j <= end; j++)
-			res |= (recorders[j] != NULL);
-		if (res)
-			return;
+		const char *id,						/* streamChannelKey */
+		const char *uid,					/* unique ID */
+		const char *types[],				/* Type labels, per recorder */
+		gboolean is_video[],				/* Whether stream is video, per recorder */
+		const char *event_name				/* JSON event name for notification */
+) {
+	/* FIXME @landswellsong which mutex we must lock? */
+	/* TODO @landswellsong error reporting upward maybe? */
+	size_t j; gboolean res = FALSE;
+	for (j = start; j <= end; j++)
+		res |= (recorders[j] != NULL);
+	if (res)
+		return;
 
-		/* Event for notification */
-		json_t *response = json_object();
-		json_object_set_new(response, "id", json_string(id));
-		json_object_set_new(response, "uid", json_string(uid));
+	/* Event for notification */
+	json_t *response = json_object();
+	json_object_set_new(response, "id", json_string(id));
+	json_object_set_new(response, "uid", json_string(uid));
+	/* Timestamp of file creation in seconds */
+	json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
 
-		/* Assuming streams contain both video and audio */
-		guint64 mt = janus_get_monotonic_time();
-		for (j = start; j <= end; j++) {
-			char *fname = g_strdup(fname_pattern);
+	/* Assuming streams contain both video and audio */
+	guint64 mt = janus_get_monotonic_time();
+	for (j = start; j <= end; j++) {
+		char *fname = g_strdup(fname_pattern);
 
-			guint64 ml = janus_get_monotonic_time();
-			char ml_str [512];
-			g_snprintf(ml_str, 512, "%llu", (long long unsigned)ml);
+		guint64 ml = janus_get_monotonic_time();
+		char ml_str [512];
+		g_snprintf(ml_str, 512, "%llu", (long long unsigned)ml);
 
-			const char *tags[] = {
-				"#{time}",
-				"#{id}",
-				"#{type}"
-			};
+		const char *tags[] = {
+			"#{time}",
+			"#{id}",
+			"#{type}"
+		};
 
-			const char *values[] = {
-				ml_str,
-				id,
-				types[j]
-			};
+		const char *values[] = {
+			ml_str,
+			id,
+			types[j]
+		};
 
-			_foreach (k, tags)
-				fname = str_replace(fname, tags[k], values[k]);
+		_foreach (k, tags)
+			fname = str_replace(fname, tags[k], values[k]);
 
-			cm_rtpbcast_recorder *recorder = g_malloc0(sizeof(cm_rtpbcast_recorder));
-			recorder->r = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], fname);
-			recorder->source = src;
-			recorder->had_keyframe = FALSE;
-			recorders[j] = recorder;
+		cm_rtpbcast_recorder *recorder = g_malloc0(sizeof(cm_rtpbcast_recorder));
+		recorder->r = janus_recorder_create(cm_rtpbcast_settings.archive_path, is_video[j], fname);
+		recorder->source = src;
+		recorder->had_keyframe = FALSE;
+		recorders[j] = recorder;
 
-			g_free(fname);
+		g_free(fname);
 
-			if(recorders[j] == NULL) {
-				JANUS_LOG(LOG_ERR, "Error starting recorder for %s\n", types[j]);
-			} else {
-				char fname[512];
-				g_snprintf(fname, 512, "%s/%s", recorders[j]->r->dir? recorders[j]->r->dir : "",
-					recorders[j]->r->filename? recorders[j]->r->filename : "??");
-				JANUS_LOG(LOG_INFO, "[%s] Recording %s started\n", id, types[j]);
-				json_object_set_new(response, types[j], json_string(fname));
-			}
+		if(recorders[j] == NULL) {
+			JANUS_LOG(LOG_ERR, "[%s] Error starting recorder for %s\n", id, types[j]);
+		} else {
+			char fname[512];
+			g_snprintf(fname, 512, "%s/%s", recorders[j]->r->dir? recorders[j]->r->dir : "",
+				recorders[j]->r->filename? recorders[j]->r->filename : "??");
+			JANUS_LOG(LOG_INFO, "[%s] Recording %s started\n", id, types[j]);
+			json_object_set_new(response, types[j], json_string(fname));
 		}
+	}
 
-		/* Note that we are recording and notify  */
-		res = FALSE;
-		for (j = start; j <= end; j++)
-			res |= (recorders[j] != NULL);
+	/* Note that we are recording and notify  */
+	res = FALSE;
+	for (j = start; j <= end; j++)
+		res |= (recorders[j] != NULL);
 
-		json_decref(response);
+	if(res)
+		cm_rtpbcast_store_event(response, event_name);
+
+	json_decref(response);
 }
 
 static void cm_rtpbcast_generic_stop_recording(
@@ -3184,8 +3226,6 @@ static void cm_rtpbcast_generic_stop_recording(
 		res &= (!recorders[j]);
 	if (res)
 		return;
-
-	json_t *response = json_object();
 
 	/* Don't allow to create job file if not frame has been stored. Audio source will be ignored too if no keyframe arrived for video stream */
 	int recorder_video_index = (start == end)? 0 : VIDEO;
@@ -3204,21 +3244,18 @@ static void cm_rtpbcast_generic_stop_recording(
 				janus_recorder_free(tmp);
 			}
 		}
+		// dirpath with job files, grouped by event-name
+		char dirpath[512];
+		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+		filesystem_rmrf(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Removed invalid event at %s\n", id, dirpath);
 	} else {
-
-		/* Event for notification */
-		json_object_set_new(response, "id", json_string(id));
-		json_object_set_new(response, "uid", json_string(uid));
-		/* Timestamp of file creation in seconds */
-		json_object_set_new(response, "createdAt", json_integer(janus_get_real_time() / (1000 * 1000)));
-
 		for (j = start; j <= end; j++) {
 			if (recorders[j]) {
 				char fname[512];
 				g_snprintf(fname, 512, "%s/%s", recorders[j]->r->dir? recorders[j]->r->dir : "",
 					recorders[j]->r->filename? recorders[j]->r->filename : "??");
 				janus_recorder_close(recorders[j]->r);
-				json_object_set_new(response, types[j], json_string(fname));
 				JANUS_LOG(LOG_INFO, "[%s] Closed %s recording %s\n", id, types[j], fname);
 				janus_recorder *tmp = recorders[j]->r;
 				recorders[j]->r = NULL;
@@ -3231,11 +3268,13 @@ static void cm_rtpbcast_generic_stop_recording(
 		for (j = start; j <= end; j++)
 			res &= (!recorders[j]);
 
-		if(res)
-			cm_rtpbcast_store_event(response, event_name);
+		char dirpath[512];
+		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+		cm_rtpbcast_import_events_from_path(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Imported event from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
+		filesystem_rmrf(dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Cleaned-up imported events at %s\n", id, dirpath);
 	}
-
-	json_decref(response);
 }
 
 void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt, int source_index) {
@@ -3248,7 +3287,8 @@ void cm_rtpbcast_start_recording(cm_rtpbcast_mountpoint *mnt, int source_index) 
 		mnt->id,
 		mnt->uid,
 		av_names,
-		is_video
+		is_video,
+		"archive-finished"
 	);
 }
 
@@ -3275,7 +3315,8 @@ void cm_rtpbcast_start_thumbnailing(cm_rtpbcast_mountpoint *mnt, int source_inde
 		mnt->id,
 		mnt->uid,
 		types,
-		is_video
+		is_video,
+		"thumbnailing-finished"
 	);
 }
 
@@ -3825,3 +3866,41 @@ cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int 
 	}
 	return h264pay;
 }
+
+int filesystem_is_file(const char *path) {
+	struct stat path_stat;
+	stat(path, &path_stat);
+	return S_ISREG(path_stat.st_mode);
+}
+
+int filesystem_nftw_unlink(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	if(FTW_DP == typeflag && ftwbuf->level == 0) {
+		return 0;
+	}
+	int rv = remove(fpath);
+	if (rv)
+		perror(fpath);
+	return rv;
+}
+
+int filesystem_rmrf(char *path) {
+	return nftw(path, filesystem_nftw_unlink, 64, FTW_DEPTH | FTW_PHYS);
+}
+
+int cm_rtpbcast_import_event_from_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+	if(!filesystem_is_file(fpath))
+		return 0;
+
+	char destpath[512];
+	g_snprintf(destpath, 512, "%s/%s", cm_rtpbcast_settings.job_path, basename(fpath));
+
+	int rv = rename(fpath, destpath);
+	if (rv)
+		perror(fpath);
+	return rv;
+}
+
+int cm_rtpbcast_import_events_from_path(char *path) {
+	return nftw(path, cm_rtpbcast_import_event_from_path, 64, FTW_DEPTH | FTW_PHYS);
+}
+
