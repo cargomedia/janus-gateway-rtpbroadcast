@@ -877,13 +877,13 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	}
 	cm_rtpbcast_port_manager_init(cm_rtpbcast_settings.minport, cm_rtpbcast_settings.maxport);
 
-	JANUS_LOG(LOG_INFO, "%s: Initializing...!\n", CM_RTPBCAST_NAME);
-	/* In case of crash, segfault, kill, restart let's see if there are some unfinished JobFile-s */
-	/* Move JobFile-s from temporary path to final job path */
+	JANUS_LOG(LOG_INFO, "%s: Initializing...\n", CM_RTPBCAST_NAME);
+	/* In case of crash, segfault, kill, restart let's see if there are some unfinished Events */
+	/* Move Events from temporary path to final job path */
 	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_path_temp);
 	JANUS_LOG(LOG_INFO, "%s: Imported waiting events from %s into %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp, cm_rtpbcast_settings.job_path);
 	filesystem_rmrf(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Removed outdated events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp);
+	JANUS_LOG(LOG_INFO, "%s: Cleaned-up imported events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -3116,7 +3116,7 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 	char dirpath[512];
 	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name);
 	if(janus_mkdir(dirpath, 0755) < 0) {
-		JANUS_LOG(LOG_ERR, "[%s] Couldn't create folder in temporary jobs folder, error creating folder '%s'...\n", json_string_value(mountpoint_id), dirpath);
+		JANUS_LOG(LOG_ERR, "[%s] Couldn't create folder in temporary events folder: '%s'...\n", json_string_value(mountpoint_id), dirpath);
 	} else {
 		char fullpath[512];
 		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name, fname);
@@ -3124,7 +3124,7 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 		if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
 			JANUS_LOG(LOG_ERR, "[%s] Error saving JSON to %s\n", json_string_value(mountpoint_id), fullpath);
 		} else {
-			JANUS_LOG(LOG_INFO, "[%s] Created `jobfile` for recording %s\n", json_string_value(mountpoint_id), fullpath);
+			JANUS_LOG(LOG_INFO, "[%s] Created event for recording %s\n", json_string_value(mountpoint_id), fullpath);
 		}
 	}
 	g_free(fname);
@@ -3249,7 +3249,7 @@ static void cm_rtpbcast_generic_stop_recording(
 		char dirpath[512];
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
 		filesystem_rmrf(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Removed job-files at %s\n", id, dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Removed invalid event at %s\n", id, dirpath);
 	} else {
 		for (j = start; j <= end; j++) {
 			if (recorders[j]) {
@@ -3272,9 +3272,9 @@ static void cm_rtpbcast_generic_stop_recording(
 		char dirpath[512];
 		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
 		cm_rtpbcast_import_events_from_path(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Imported events from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
+		JANUS_LOG(LOG_INFO, "[%s] Imported event from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
 		filesystem_rmrf(dirpath);
-		JANUS_LOG(LOG_INFO, "[%s] Removed outdated events at %s\n", id, dirpath);
+		JANUS_LOG(LOG_INFO, "[%s] Cleaned-up imported events at %s\n", id, dirpath);
 	}
 }
 
