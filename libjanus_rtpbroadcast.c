@@ -3877,7 +3877,7 @@ int rmrf(char *path) {
 
 int move_file_to_job_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
 	if(!is_regular_file(fpath))
-		return;
+		return 0;
 
 	char destpath[512];
 	g_snprintf(destpath, 512, "%s/%s", cm_rtpbcast_settings.job_path, basename(fpath));
