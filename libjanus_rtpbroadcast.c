@@ -245,7 +245,7 @@ static struct {
 	const char *hostname;
 	guint minport, maxport;
 	const char *job_path;
-	const char *job_path_temp;
+	const char *job_temp_path;
 	const char *job_pattern;
 	const char *archive_path;
 	const char *recording_pattern;
@@ -761,7 +761,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	cm_rtpbcast_settings.mountpoint_info_interval = 10;
 	cm_rtpbcast_settings.udp_relay_interval = 50000;
 	cm_rtpbcast_settings.job_path = g_strdup("/tmp/jobs");
-	cm_rtpbcast_settings.job_path_temp = g_strdup("/tmp/jobs-temp");
+	cm_rtpbcast_settings.job_temp_path = g_strdup("/tmp/jobs-temp");
 	cm_rtpbcast_settings.job_pattern = g_strdup("job-#{md5}");
 	cm_rtpbcast_settings.archive_path =  g_strdup("/tmp/recordings");
 	cm_rtpbcast_settings.recording_pattern = g_strdup("rec-#{id}-#{time}-#{type}");
@@ -839,7 +839,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char *inames [] = {
 			 "hostname",
 			 "job_path",
-			 "job_path_temp",
+			 "job_temp_path",
 			 "job_pattern",
 			 "archive_path",
 			 "recording_pattern",
@@ -848,7 +848,7 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 			const char **ivars [] = {
 				&cm_rtpbcast_settings.hostname,
 				&cm_rtpbcast_settings.job_path,
-				&cm_rtpbcast_settings.job_path_temp,
+				&cm_rtpbcast_settings.job_temp_path,
 				&cm_rtpbcast_settings.job_pattern,
 				&cm_rtpbcast_settings.archive_path,
 				&cm_rtpbcast_settings.recording_pattern,
@@ -880,10 +880,10 @@ int cm_rtpbcast_init(janus_callbacks *callback, const char *config_path) {
 	JANUS_LOG(LOG_INFO, "%s: Initializing...\n", CM_RTPBCAST_NAME);
 	/* In case of crash, segfault, kill, restart let's see if there are some unfinished Events */
 	/* Move Events from temporary path to final job path */
-	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Imported waiting events from %s into %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp, cm_rtpbcast_settings.job_path);
-	filesystem_rmrf(cm_rtpbcast_settings.job_path_temp);
-	JANUS_LOG(LOG_INFO, "%s: Cleaned-up imported events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_path_temp);
+	cm_rtpbcast_import_events_from_path(cm_rtpbcast_settings.job_temp_path);
+	JANUS_LOG(LOG_INFO, "%s: Imported waiting events from %s into %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_temp_path, cm_rtpbcast_settings.job_path);
+	filesystem_rmrf(cm_rtpbcast_settings.job_temp_path);
+	JANUS_LOG(LOG_INFO, "%s: Cleaned-up imported events at %s\n", CM_RTPBCAST_NAME, cm_rtpbcast_settings.job_temp_path);
 
 	/* Not showing anything, no mountpoint configured at startup */
 	sessions = g_hash_table_new(NULL, NULL);
@@ -968,7 +968,7 @@ void cm_rtpbcast_destroy(void) {
 	/* Freeing configuration strings */
 	g_free((gpointer)cm_rtpbcast_settings.hostname);
 	g_free((gpointer)cm_rtpbcast_settings.job_path);
-	g_free((gpointer)cm_rtpbcast_settings.job_path_temp);
+	g_free((gpointer)cm_rtpbcast_settings.job_temp_path);
 	g_free((gpointer)cm_rtpbcast_settings.job_pattern);
 	g_free((gpointer)cm_rtpbcast_settings.archive_path);
 	g_free((gpointer)cm_rtpbcast_settings.recording_pattern);
@@ -2688,6 +2688,8 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							source->frame_key_overdue = TRUE;
 						}
 					}
+					g_free(vp8pay);
+					g_free(h264);
 				}
 
 				/* Is there a recorder? */
@@ -2762,7 +2764,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 	return NULL;
 }
 
-	gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin) {
+gboolean cm_rtpbcast_construct_address(char *hostname, int port, struct sockaddr_in *sin) {
 		/* Let's create and verify the hostname */
 		struct hostent *host = gethostbyname(hostname);
 		if (host == NULL) {
@@ -3113,12 +3115,12 @@ void cm_rtpbcast_store_event(json_t* response, const char *event_name) {
 
 	json_t *mountpoint_id = json_object_get(response, "id");
 	char dirpath[512];
-	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name);
+	g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_temp_path, json_string_value(mountpoint_id), event_name);
 	if(janus_mkdir(dirpath, 0755) < 0) {
 		JANUS_LOG(LOG_ERR, "[%s] Couldn't create folder in temporary events folder: '%s'...\n", json_string_value(mountpoint_id), dirpath);
 	} else {
 		char fullpath[512];
-		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_path_temp, json_string_value(mountpoint_id), event_name, fname);
+		g_snprintf(fullpath, 512, "%s/%s/%s/%s.json", cm_rtpbcast_settings.job_temp_path, json_string_value(mountpoint_id), event_name, fname);
 
 		if (json_dump_file(envelope, fullpath, JSON_INDENT(4))) {
 			JANUS_LOG(LOG_ERR, "[%s] Error saving JSON to %s\n", json_string_value(mountpoint_id), fullpath);
@@ -3246,7 +3248,7 @@ static void cm_rtpbcast_generic_stop_recording(
 		}
 		// dirpath with job files, grouped by event-name
 		char dirpath[512];
-		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_temp_path, id, event_name);
 		filesystem_rmrf(dirpath);
 		JANUS_LOG(LOG_INFO, "[%s] Removed invalid event at %s\n", id, dirpath);
 	} else {
@@ -3269,7 +3271,7 @@ static void cm_rtpbcast_generic_stop_recording(
 			res &= (!recorders[j]);
 
 		char dirpath[512];
-		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_path_temp, id, event_name);
+		g_snprintf(dirpath, 512, "%s/%s/%s", cm_rtpbcast_settings.job_temp_path, id, event_name);
 		cm_rtpbcast_import_events_from_path(dirpath);
 		JANUS_LOG(LOG_INFO, "[%s] Imported event from %s into %s\n", id, dirpath, cm_rtpbcast_settings.job_path);
 		filesystem_rmrf(dirpath);
@@ -3396,9 +3398,6 @@ void cm_rtpbcast_mountpoint_destroy(gpointer data, gpointer user_data) {
 	/* If it's recording, stop it */
 	if(mp->rc[AUDIO] && mp->rc[AUDIO]->r || mp->rc[VIDEO] && mp->rc[VIDEO]->r)
 		cm_rtpbcast_stop_recording(mp, 0);
-
-	if(mp->trc[0] && mp->trc[0]->r)
-		cm_rtpbcast_stop_thumbnailing(mp, 0);
 
 	/* Remove from respective session */
 	if(mp->session) {
