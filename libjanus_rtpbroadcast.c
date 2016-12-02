@@ -966,13 +966,13 @@ void cm_rtpbcast_destroy(void) {
 	g_hash_table_destroy(sessions);
 	janus_mutex_unlock(&sessions_mutex);
 
-    if (old_sessions)
-        g_list_free(old_sessions);
+	if (old_sessions)
+		g_list_free(old_sessions);
 
-    JANUS_LOG(LOG_INFO, "8\n");
+	JANUS_LOG(LOG_INFO, "8\n");
 
-    if (super_sessions)
-        g_list_free(super_sessions);
+	if (super_sessions)
+		g_list_free(super_sessions);
 
 	cm_rtpbcast_port_manager_destroy();
 	g_async_queue_unref(messages);
@@ -3847,8 +3847,8 @@ static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
 						is_complete = TRUE;
 					}
 				}
-                g_free(first_vp8pay);
-                g_free(last_vp8pay);
+				g_free(first_vp8pay);
+				g_free(last_vp8pay);
 			}
 		}
 	}
