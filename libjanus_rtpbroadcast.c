@@ -2715,7 +2715,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				if(nstream == 0 && mountpoint->rc[j] && mountpoint->rc[j]->r) {
 					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
 					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
-					janus_recorder_save_frame(mountpoint->rc[j]->r, buffer, bytes);
+					janus_recorder_save_frame(mountpoint->rc[j]->r, (char *) buffer, bytes);
 					/* Note that keyframe arrived to this recorder */
 					if(is_video_keyframe)
 						mountpoint->rc[j]->had_keyframe = TRUE;
@@ -2731,7 +2731,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							GList *temp = source->keyframe.latest_keyframe;
 							while(temp) {
 								cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
-								janus_recorder_save_frame(mountpoint->trc[0]->r, pkt->data, pkt->length);
+								janus_recorder_save_frame(mountpoint->trc[0]->r, (char *) pkt->data, pkt->length);
 								temp = temp->next;
 							}
 							mountpoint->trc[0]->had_keyframe = TRUE;
@@ -2943,7 +2943,7 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 
 	st->cur = -1.0;
 	st->packet_loss_rate = -1.0;
-	st->packet_loss_count = -1.0;
+	st->packet_loss_count = -1;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -3828,7 +3828,7 @@ static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
 	gboolean is_complete = FALSE;
 	if(packets != NULL) {
 		/* Sort by sequence number */
-		g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
+		packets = g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
 		/* Get first and last element of the list */
 		GList *first_p = g_list_first(packets);
 		GList *last_p = g_list_last(packets);
@@ -3839,8 +3839,8 @@ static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
 			int computed_packet_count = last_relay_p->seq_number - first_relay_p->seq_number + 1;
 			if(computed_packet_count == g_list_length(packets)) {
 				/* Get VP8 payload from RTP packets */
-				cm_rtpbcast_vp8_payload_dscr *first_vp8pay = cm_rtpbcast_vp8_parse_payload(first_relay_p->data, first_relay_p->length);
-				cm_rtpbcast_vp8_payload_dscr *last_vp8pay = cm_rtpbcast_vp8_parse_payload(last_relay_p->data, last_relay_p->length);
+				cm_rtpbcast_vp8_payload_dscr *first_vp8pay = cm_rtpbcast_vp8_parse_payload((char *)first_relay_p->data, first_relay_p->length);
+				cm_rtpbcast_vp8_payload_dscr *last_vp8pay = cm_rtpbcast_vp8_parse_payload((char *)last_relay_p->data, last_relay_p->length);
 				if(first_vp8pay != NULL && last_vp8pay != NULL) {
 					if(first_vp8pay->is_sbit && last_relay_p->data->markerbit) {
 						/* This is valid multi-packet frame */
@@ -3906,7 +3906,7 @@ int filesystem_rmrf(char *path) {
 	return nftw(path, filesystem_nftw_unlink, 64, FTW_DEPTH | FTW_PHYS);
 }
 
-int cm_rtpbcast_import_event_from_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+int cm_rtpbcast_import_event_from_path(char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
 	if(!filesystem_is_file(fpath))
 		return 0;
 
