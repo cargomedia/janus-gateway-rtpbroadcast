@@ -642,7 +642,6 @@ void *cm_rtpbcast_watchdog(void *data) {
 	gint64 now = 0;
 	gint64 session_update = 0;
 	while(g_atomic_int_get(&initialized) && !g_atomic_int_get(&stopping)) {
-		janus_mutex_lock(&sessions_mutex);
 		/* Iterate on all the sessions */
 		now = janus_get_monotonic_time();
 		if(old_sessions != NULL) {
@@ -669,6 +668,7 @@ void *cm_rtpbcast_watchdog(void *data) {
 			}
 		}
 
+		janus_mutex_lock(&sessions_mutex);
 		if (now-session_update >= cm_rtpbcast_settings.mountpoint_info_interval * G_USEC_PER_SEC) {
 			if(sessions && g_hash_table_size(sessions) > 0) {
 				GHashTableIter iter;
@@ -701,8 +701,8 @@ void *cm_rtpbcast_watchdog(void *data) {
 			}
 			session_update = janus_get_monotonic_time();
 		}
-
 		janus_mutex_unlock(&sessions_mutex);
+
 		janus_mutex_lock(&mountpoints_mutex);
 		/* Iterate on all the mountpoints */
 		if(old_mountpoints != NULL) {
@@ -952,6 +952,11 @@ void cm_rtpbcast_destroy(void) {
 		watchdog = NULL;
 	}
 
+	if(udp_relay != NULL) {
+		g_thread_join(udp_relay);
+		udp_relay = NULL;
+	}
+
 	/* FIXME We should destroy the sessions cleanly */
 	usleep(500000);
 	janus_mutex_lock(&mountpoints_mutex);
@@ -960,6 +965,15 @@ void cm_rtpbcast_destroy(void) {
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_destroy(sessions);
 	janus_mutex_unlock(&sessions_mutex);
+
+	if (old_sessions)
+		g_list_free(old_sessions);
+
+	JANUS_LOG(LOG_INFO, "8\n");
+
+	if (super_sessions)
+		g_list_free(super_sessions);
+
 	cm_rtpbcast_port_manager_destroy();
 	g_async_queue_unref(messages);
 	messages = NULL;
@@ -1091,18 +1105,21 @@ void cm_rtpbcast_destroy_session(janus_plugin_session *handle, int *error) {
 	/* If the session is relaying UDP, also remove listeners from all the sources */
 	cm_rtpbcast_stop_udp_relays(session, NULL);
 
-	janus_mutex_lock(&session->mutex);
 	/* If this is a streamer session, kill the stream */
+	janus_mutex_lock(&session->mutex);
 	if(session->mps)
 		g_list_foreach(session->mps, cm_rtpbcast_mountpoint_destroy, NULL);
 	session->mps = NULL;
+	janus_mutex_unlock(&session->mutex);
+
 	/* Remove from session list */
+	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_remove(sessions, handle);
 	janus_mutex_unlock(&sessions_mutex);
+	old_sessions = g_list_append(old_sessions, session);
 
 	super_sessions = g_list_remove_all(super_sessions, session);
 	/* Cleaning up and removing the session is done in a lazy way */
-	old_sessions = g_list_append(old_sessions, session);
 
 	return;
 }
@@ -2698,7 +2715,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 				if(nstream == 0 && mountpoint->rc[j] && mountpoint->rc[j]->r) {
 					// @landswellsong: diabling logging here, streams are recorded by default and this will produce a mess
 					// JANUS_LOG(LOG_HUGE, "[%s] Saving %s frame (%d bytes)\n", name, av_names[j], bytes);
-					janus_recorder_save_frame(mountpoint->rc[j]->r, buffer, bytes);
+					janus_recorder_save_frame(mountpoint->rc[j]->r, (char *) buffer, bytes);
 					/* Note that keyframe arrived to this recorder */
 					if(is_video_keyframe)
 						mountpoint->rc[j]->had_keyframe = TRUE;
@@ -2714,7 +2731,7 @@ static void *cm_rtpbcast_relay_thread(void *data) {
 							GList *temp = source->keyframe.latest_keyframe;
 							while(temp) {
 								cm_rtpbcast_rtp_relay_packet *pkt = (cm_rtpbcast_rtp_relay_packet *)temp->data;
-								janus_recorder_save_frame(mountpoint->trc[0]->r, pkt->data, pkt->length);
+								janus_recorder_save_frame(mountpoint->trc[0]->r, (char *) pkt->data, pkt->length);
 								temp = temp->next;
 							}
 							mountpoint->trc[0]->had_keyframe = TRUE;
@@ -2926,7 +2943,7 @@ static void cm_rtpbcast_stats_restart(cm_rtpbcast_stats *st) {
 
 	st->cur = -1.0;
 	st->packet_loss_rate = -1.0;
-	st->packet_loss_count = -1.0;
+	st->packet_loss_count = -1;
 
 	janus_mutex_unlock(&st->stat_mutex);
 }
@@ -3808,9 +3825,10 @@ gint cm_rtpbcast_rtp_relay_packet_seq_sort_function (gconstpointer a, gconstpoin
 
 static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
 	/* Algorithm description https://tools.ietf.org/html/draft-ietf-payload-vp8-17#section-4.5.1 */
+	gboolean is_complete = FALSE;
 	if(packets != NULL) {
 		/* Sort by sequence number */
-		g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
+		packets = g_list_sort(g_list_first(packets), cm_rtpbcast_rtp_relay_packet_seq_sort_function);
 		/* Get first and last element of the list */
 		GList *first_p = g_list_first(packets);
 		GList *last_p = g_list_last(packets);
@@ -3821,19 +3839,21 @@ static gboolean cm_rtpbcast_vp8_is_frame_complete (GList *packets) {
 			int computed_packet_count = last_relay_p->seq_number - first_relay_p->seq_number + 1;
 			if(computed_packet_count == g_list_length(packets)) {
 				/* Get VP8 payload from RTP packets */
-				cm_rtpbcast_vp8_payload_dscr *first_vp8pay = cm_rtpbcast_vp8_parse_payload(first_relay_p->data, first_relay_p->length);
-				cm_rtpbcast_vp8_payload_dscr *last_vp8pay = cm_rtpbcast_vp8_parse_payload(last_relay_p->data, last_relay_p->length);
+				cm_rtpbcast_vp8_payload_dscr *first_vp8pay = cm_rtpbcast_vp8_parse_payload((char *)first_relay_p->data, first_relay_p->length);
+				cm_rtpbcast_vp8_payload_dscr *last_vp8pay = cm_rtpbcast_vp8_parse_payload((char *)last_relay_p->data, last_relay_p->length);
 				if(first_vp8pay != NULL && last_vp8pay != NULL) {
 					if(first_vp8pay->is_sbit && last_relay_p->data->markerbit) {
 						/* This is valid multi-packet frame */
-						return TRUE;
+						is_complete = TRUE;
 					}
 				}
+				g_free(first_vp8pay);
+				g_free(last_vp8pay);
 			}
 		}
 	}
 	/* Frame is invalid */
-	return FALSE;
+	return is_complete;
 }
 
 cm_rtpbcast_h264_payload_dscr *cm_rtpbcast_h264_parse_payload(char* buffer, int len) {
@@ -3886,7 +3906,7 @@ int filesystem_rmrf(char *path) {
 	return nftw(path, filesystem_nftw_unlink, 64, FTW_DEPTH | FTW_PHYS);
 }
 
-int cm_rtpbcast_import_event_from_path(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+int cm_rtpbcast_import_event_from_path(char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
 	if(!filesystem_is_file(fpath))
 		return 0;
 
