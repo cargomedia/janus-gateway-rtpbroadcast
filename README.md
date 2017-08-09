@@ -1,3 +1,8 @@
+UNMAINTAINED
+============
+This project is not maintained anymore.
+If you want to take over contact us at tech@cargomedia.ch.
+
 janus-gateway-rtpbroadcast
 ==========================
 [janus-gateway](https://github.com/meetecho/janus-gateway) custom plugin.
